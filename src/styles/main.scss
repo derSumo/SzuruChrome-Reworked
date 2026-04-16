@@ -1,0 +1,270 @@
+@use "sass:color";
+
+@use "primeflex/primeflex.scss";
+
+/* open-sans-regular - latin */
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-weight: 400;
+  src:
+    local(""),
+    url("/assets/open-sans-v34-latin-regular.woff2") format("woff2");
+}
+
+*,
+*:before,
+*:after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Open Sans", sans-serif;
+  font-size: 16px;
+}
+
+$primary-color: #24aadd;
+$danger-color: #f44336;
+
+$primary-color-dark: color.scale($primary-color, $lightness: -30%);
+$danger-color-dark: color.scale($danger-color, $lightness: -50%);
+// TODO: Darker success color
+
+:root {
+  --button-bg-color: #a2a2a2;
+  --primary-color: #{$primary-color};
+  --bg-main-color: #fff;
+  --bg-secondary-color: #fafafa;
+  --border-color: #eee;
+  --secondary-text: #888;
+  --danger-color: #{$danger-color};
+  --success-color: #4caf50;
+  --section-header-fg-color: #4c4c4c;
+  --section-header-bg-color: #eee;
+  --text-color: #111;
+  --tab-color: rgba(0, 0, 0, 0.06);
+}
+
+html.dark {
+  --button-bg-color: #666;
+  --primary-color: #{$primary-color-dark};
+  --bg-main-color: #1a1a1a;
+  --bg-secondary-color: #3e3e3e;
+  --border-color: #474747;
+  --danger-color: #{$danger-color-dark};
+  --section-header-fg-color: #d9d9d9;
+  --section-header-bg-color: #272727;
+  --text-color: #e6e6e6;
+  --tab-color: rgba(255, 255, 255, 0.06);
+  color: var(--text-color);
+  background-color: var(--bg-main-color);
+  color-scheme: dark;
+}
+
+body {
+  margin: 0px;
+  display: block;
+}
+
+input[type="email"],
+input[type="number"],
+input[type="password"],
+input[type="text"],
+select,
+button {
+  height: 30px;
+}
+
+button {
+  background-color: var(--button-bg-color);
+  border: none;
+  color: #fff;
+
+  cursor: pointer;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+button.primary {
+  background-color: var(--primary-color);
+}
+
+input[type="email"],
+input[type="number"],
+input[type="password"],
+input[type="text"],
+select {
+  color: var(--text-color);
+  background-color: var(--bg-secondary-color);
+  border: 2px solid var(--border-color);
+
+  padding: 0.2em 0.3em;
+  // box-sizing: border-box;
+
+  width: 100%;
+
+  &:focus {
+    outline: var(--primary-color) solid 2px;
+  }
+}
+
+input[type="radio"] {
+  margin: 3px 3px 0 5px;
+}
+
+textarea {
+  color: var(--text-color);
+  background-color: var(--bg-secondary-color);
+  border: 2px solid var(--border-color);
+  width: 100%;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: scroll;
+  text-overflow: ellipsis;
+  resize: vertical;
+
+  &:focus {
+    outline: var(--primary-color) solid 2px;
+    // box-sizing: content-box;
+  }
+}
+
+img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.flex {
+  display: flex;
+}
+
+// DEPRECATED: Replace with primeflex w-full
+.full {
+  width: 100%;
+}
+
+ul.compact {
+  list-style-type: none;
+  padding: 0;
+  display: inline;
+}
+
+.compact-tags,
+.compact-pools {
+  list-style-type: none;
+  padding: 0;
+  display: inline;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    line-height: 1.2rem;
+  }
+}
+
+.tag-general {
+  color: var(--primary-color);
+}
+
+.remove-tag {
+  color: var(--secondary-text);
+}
+
+.tag-usages {
+  color: var(--secondary-text);
+  font-size: 90%;
+  text-indent: initial;
+}
+
+a.remove-tag {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.messages {
+  > div {
+    display: flex;
+    border-radius: 2px;
+    background: var(--primary-color);
+    color: #fff;
+
+    a,
+    span {
+      padding: 5px;
+    }
+
+    a {
+      color: #fff;
+      text-decoration: none;
+    }
+
+    &:first-child {
+      margin-top: 10px;
+    }
+
+    &:not(:last-child) {
+      margin-bottom: 5px;
+    }
+  }
+}
+
+.bg-danger {
+  background: var(--danger-color) !important;
+}
+
+.bg-success {
+  background: var(--success-color) !important;
+}
+
+.danger {
+  color: var(--danger-color);
+}
+
+.success {
+  color: var(--success-color);
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.popup-section {
+  margin: 10px;
+}
+
+.section-header {
+  height: 30px;
+  padding: 0 6px 0 10px;
+  background-color: var(--section-header-bg-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  > span {
+    font-size: 1.2em;
+    vertical-align: middle;
+    color: var(--section-header-fg-color);
+  }
+
+  &.toggleable {
+    cursor: pointer;
+  }
+}
+
+.section-row {
+  margin: 10px 5px 0;
+}
+
+.section-label {
+  display: block;
+  margin: 0 0 5px 0;
+}
+
+.section-block {
+  display: block;
+}
+
+.color-primary {
+  color: var(--primary-color);
+}
