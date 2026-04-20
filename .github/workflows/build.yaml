@@ -6,6 +6,7 @@ on:
       - extension/**
       - package.json
       - pnpm-lock.yaml
+      - .github/**
   workflow_dispatch:
     inputs:
       publish_amo_listed:
