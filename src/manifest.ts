@@ -26,6 +26,7 @@ export async function getManifest() {
     },
     background: {
       service_worker: "./dist/assets/background.js",
+      scripts: ["./dist/assets/background.js"],
       type: "module",
     },
     permissions: ["storage", "activeTab", "tabs", "scripting", "contextMenus", "declarativeNetRequestWithHostAccess"],
