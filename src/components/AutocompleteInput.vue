@@ -92,10 +92,10 @@ watch(props, (newValue) => {
 </script>
 
 <template>
-  <div style="display: flex; flex-direction: column">
-    <div style="display: flex">
-      <input type="text" v-model="inputText" @keyup="onAddItemKeyUp" @keydown="onAddItemKeyDown" autocomplete="off" />
-      <button class="primary" style="margin-left: 5px" @click="addItemFromCurrentInput">Add</button>
+  <div class="autocomplete-wrap">
+    <div class="autocomplete-input-row">
+      <input type="text" v-model="inputText" @keyup="onAddItemKeyUp" @keydown="onAddItemKeyDown" autocomplete="off" class="autocomplete-field" />
+      <button class="autocomplete-add-btn" @click="addItemFromCurrentInput">Add</button>
     </div>
 
     <div class="autocomplete-items" v-bind:class="{ show: autocompleteShown }">
@@ -114,13 +114,68 @@ watch(props, (newValue) => {
 </template>
 
 <style lang="scss">
+.autocomplete-wrap {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.autocomplete-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.autocomplete-field {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary-color);
+  color: var(--text-color);
+  padding: 0 8px;
+  font-size: 12px;
+  transition: border-color 150ms ease;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(36, 170, 221, 0.15);
+  }
+}
+
+.autocomplete-add-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--primary-color);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 150ms ease;
+  white-space: nowrap;
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
 .autocomplete-items {
   position: absolute;
   z-index: 10;
+  top: 32px;
+  left: 0;
+  right: 0;
   background-color: var(--bg-main-color);
-  border: 2px solid var(--primary-color);
-  margin-top: 34px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   display: none;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
 
   &.show {
     display: block;
@@ -128,18 +183,23 @@ watch(props, (newValue) => {
 
   > div {
     cursor: pointer;
-    padding: 2px 4px;
+    padding: 4px 8px;
 
     display: flex;
     align-items: center;
-    gap: 0.5em;
+    gap: 0.4em;
+    font-size: 12px;
+    transition: background 100ms ease;
+
+    &:first-child {
+      border-radius: 6px 6px 0 0;
+    }
+    &:last-child {
+      border-radius: 0 0 6px 6px;
+    }
 
     &:hover {
-      background: var(--primary-color);
-
-      > span {
-        color: var(--text-color);
-      }
+      background: var(--tab-color);
     }
   }
 
@@ -147,7 +207,7 @@ watch(props, (newValue) => {
     background: var(--primary-color);
 
     > span {
-      color: var(--text-color);
+      color: #fff;
     }
   }
 }

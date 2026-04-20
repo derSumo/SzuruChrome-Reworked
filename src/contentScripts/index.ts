@@ -1,9 +1,22 @@
 import { NeoScraper, ScrapeResults } from "neo-scraper";
-import { BrowserCommand } from "~/models";
+import { BrowserCommand, HotkeyImportCommandData } from "~/models";
 import { guessMimeTypeFromUrl } from "~/utils";
+import { t, setLanguage, Language } from "~/i18n";
 
 // Firefox `browser.tabs.executeScript()` requires scripts return a primitive value
 (() => {
+  // Read language from stored config
+  async function initLanguage() {
+    try {
+      const storage = await browser.storage.local.get("config");
+      let raw = storage?.config;
+      if (!raw) return;
+      if (typeof raw === "string") raw = JSON.parse(raw);
+      if (raw?.value && typeof raw.value === "object") raw = raw.value;
+      if (raw?.language) setLanguage(raw.language as Language);
+    } catch { /* ignore */ }
+  }
+  initLanguage();
   function grabPost(): ScrapeResults {
     const scraper = new NeoScraper();
     return scraper.scrapeDocument(document, true);
@@ -151,10 +164,14 @@ import { guessMimeTypeFromUrl } from "~/utils";
     } else if (data.status === "success") {
       hideProgressBar();
       const link = data.postUrl ? `<a href="${data.postUrl}" target="_blank">Post #${data.postId}</a>` : "Post";
-      showToast("success", `✔ ${link} imported successfully`);
+      if (data.alreadyUploaded) {
+        showToast("success", t("toast.alreadyUploaded", { link }));
+      } else {
+        showToast("success", t("toast.imported", { link }));
+      }
     } else if (data.status === "error") {
       hideProgressBar();
-      showToast("error", `✘ Import failed: ${data.message ?? "Unknown error"}`, 6000);
+      showToast("error", t("toast.importFailed", { message: data.message ?? "Unknown error" }), 6000);
     }
   }
 
@@ -174,22 +191,39 @@ import { guessMimeTypeFromUrl } from "~/utils";
 
   // ── Hotkey quick-import ─────────────────────────────────
   type HotkeyConfig = { enabled: boolean; key: string; modifiers: string[] };
+  type StoredHotkeyConfig = {
+    hotkey?: HotkeyConfig;
+    hotkeyLinkLast?: HotkeyConfig;
+  };
 
-  async function getHotkeyConfig(): Promise<HotkeyConfig | undefined> {
+  async function getHotkeyConfig(): Promise<StoredHotkeyConfig | undefined> {
     try {
       const storage = await browser.storage.local.get("config");
       let raw = storage?.config;
       if (!raw) return undefined;
       if (typeof raw === "string") raw = JSON.parse(raw);
       if (raw?.value && typeof raw.value === "object") raw = raw.value;
-      return raw?.hotkey as HotkeyConfig | undefined;
+      return {
+        hotkey: raw?.hotkey as HotkeyConfig | undefined,
+        hotkeyLinkLast: raw?.hotkeyLinkLast as HotkeyConfig | undefined,
+      };
     } catch {
       return undefined;
     }
   }
 
+  function matchesHotkey(e: KeyboardEvent, hk: HotkeyConfig | undefined) {
+    if (!hk?.enabled || !hk.key) return false;
+    if (e.key.toLowerCase() !== hk.key.toLowerCase()) return false;
+
+    const wantCtrl = hk.modifiers.includes("ctrl");
+    const wantAlt = hk.modifiers.includes("alt");
+    const wantShift = hk.modifiers.includes("shift");
+    return e.ctrlKey === wantCtrl && e.altKey === wantAlt && e.shiftKey === wantShift;
+  }
+
   // Cache the config and refresh on storage changes.
-  let _hotkeyConfig: HotkeyConfig | undefined;
+  let _hotkeyConfig: StoredHotkeyConfig | undefined;
   getHotkeyConfig().then((c) => (_hotkeyConfig = c));
   browser.storage.onChanged.addListener((changes) => {
     if (changes.config) {
@@ -200,22 +234,18 @@ import { guessMimeTypeFromUrl } from "~/utils";
   let _hotkeyImporting = false;
 
   document.addEventListener("keydown", async (e: KeyboardEvent) => {
-    const hk = _hotkeyConfig;
-    if (!hk?.enabled || !hk.key) return;
+    const hotkeyCommand =
+      matchesHotkey(e, _hotkeyConfig?.hotkeyLinkLast)
+        ? "hotkey_import_link_last"
+        : matchesHotkey(e, _hotkeyConfig?.hotkey)
+          ? "hotkey_import"
+          : undefined;
+    if (!hotkeyCommand) return;
 
     // Don't fire inside input/textarea/contenteditable
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if ((e.target as HTMLElement)?.isContentEditable) return;
-
-    // Match key
-    if (e.key.toLowerCase() !== hk.key.toLowerCase()) return;
-
-    // Match modifiers
-    const wantCtrl = hk.modifiers.includes("ctrl");
-    const wantAlt = hk.modifiers.includes("alt");
-    const wantShift = hk.modifiers.includes("shift");
-    if (e.ctrlKey !== wantCtrl || e.altKey !== wantAlt || e.shiftKey !== wantShift) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -225,10 +255,8 @@ import { guessMimeTypeFromUrl } from "~/utils";
 
     try {
       handleQuickImportStatus({ status: "running" });
-      // Send a message to the background script to trigger the import.
-      // We reuse the context menu import path by sending a special command.
       await browser.runtime.sendMessage(
-        new BrowserCommand("hotkey_import" as any, { url: window.location.href }),
+        new BrowserCommand(hotkeyCommand, new HotkeyImportCommandData(window.location.href, hotkeyCommand === "hotkey_import_link_last")),
       );
     } catch (ex: any) {
       handleQuickImportStatus({ status: "error", message: ex?.message ?? String(ex) });

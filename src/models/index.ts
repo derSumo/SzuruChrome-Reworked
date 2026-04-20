@@ -88,7 +88,7 @@ export class ScrapedPostDetails {
     this.rating = post.rating;
     this.source = post.sources.join("\n");
     this.referrer = post.referrer;
-    this.tags = post.tags.map((x) => TagDetails.fromScapedTag(x));
+    this.tags = post.tags.filter((x) => x.name && x.name.trim()).map((x) => TagDetails.fromScapedTag(x));
     this.notes = post.notes;
     this.resolution = post.resolution;
     this.uploadMode = post.uploadMode;
@@ -118,6 +118,7 @@ export class PostUploadInfo {
   state: PostUploadState = "uploading";
   error?: string;
   instancePostId?: number;
+  existingPostId?: number;
   updateTagsState?: {
     total: number;
     current?: number;
@@ -135,7 +136,8 @@ export type BrowserCommandName =
   | "fetch"
   | "fetch_content"
   | "quick_import_status"
-  | "hotkey_import";
+  | "hotkey_import"
+  | "hotkey_import_link_last";
 
 export class BrowserCommand<T = any> {
   name: BrowserCommandName;
@@ -183,6 +185,13 @@ export class FetchCommandData {
   constructor(
     public readonly url: string,
     public readonly options: RequestInit | undefined = undefined,
+  ) { }
+}
+
+export class HotkeyImportCommandData {
+  constructor(
+    public readonly url: string,
+    public readonly linkWithLastPost = false,
   ) { }
 }
 

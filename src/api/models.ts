@@ -133,14 +133,14 @@ export interface TemporaryFileUploadResult {
 
 export interface UpdatePostRequest {
   version: number;
-  tags: string[] | undefined;
-  safety: Safety | undefined;
-  source: string | undefined | null;
-  // relations: string[];
+  tags?: string[];
+  safety?: Safety;
+  source?: string | null;
+  relations?: number[];
   // notes: string[],
   // flags: string[];
-  contentUrl: string | undefined;
-  contentToken: string | undefined;
+  contentUrl?: string;
+  contentToken?: string;
 }
 
 export interface UpdatePoolRequest {

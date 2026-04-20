@@ -15,13 +15,22 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 | **Right-Click Quick Import** | Right-click any booru page → "Quick Import to szurubooru" — imports instantly without opening the popup. |
 | **Hotkey Import** | Configure a custom keyboard shortcut (e.g. `Ctrl+Shift+I`) to import the current page with one keypress. |
 | **Real Upload Progress** | Progress bar shows actual upload progress (via axios `onUploadProgress`) instead of a fake animation. |
-| **iOS Glass Toasts** | Status notifications use modern glassmorphism with backdrop blur, translucent backgrounds, and spring animations. |
+| **Glass Notify Toasts** | Status notifications use modern glassmorphism with backdrop blur, translucent backgrounds, and spring animations. |
 | **Modernized Options Page** | Redesigned settings with sidebar navigation, card layout, dark/light theme, and a built-in changelog. |
 | **403 Fix (rule34.xxx etc.)** | Content uploads now include credentials and Referer headers to bypass CDN hotlink protection. |
 | **Octet-Stream Fix** | Binary data is base64-encoded during message passing to prevent ArrayBuffer destruction in MV3 service workers. |
 | **Preview Image Fix** | Popup preview images auto-fallback to blob URLs when direct loading fails due to hotlink protection. |
 | **MIME Type Detection** | Files with missing/incorrect MIME types (`application/octet-stream`) are auto-detected from the file extension. |
 | **Filename Preservation** | Uploaded files retain their original filename from the source URL. |
+| **Multi-Language (EN/DE)** | The extension UI can be switched between English and German in Settings → Interface. |
+| **Tag Category Color Picker** | Tag category colors can now be picked with a native color picker widget. |
+| **"Already Uploaded" Toast** | Hotkey/right-click imports now show "Already uploaded as Post #X" instead of a generic error. |
+| **🆕 Auto-Relations** | After upload, a reverse-image-search runs automatically. Posts above the configurable similarity threshold (default: **60%**) are linked as relations. Can be toggled on/off in Settings → General. |
+| **🆕 Fallback Source Tag Import** | When a fallback source URL is used during import, tags from the original booru source are also imported — no tags are lost. |
+| **Import + Link Last Hotkey** | A second configurable hotkey imports the current page and links it with the previously uploaded post. |
+| **iOS Glass Popup UI** | The popup features a full iOS-glass redesign: frosted panels, animated server pill, color-coded format chips (blue = video, purple = GIF, green = image), and animated tag pills. |
+| **Animated Server Picker** | The server selector is now a compact icon that expands into a labeled pill on click, with a dropdown to switch between instances. |
+| **Liquid UI Options** | The options page features a liquid glass design with frosted translucency, fluid animations, and modern aesthetics. |
 
 ## Installation
 
@@ -87,13 +96,19 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 | **Rechtsklick Quick Import** | Rechtsklick auf jeder Booru-Seite → "Quick Import to szurubooru" — importiert sofort ohne das Popup zu öffnen. |
 | **Hotkey Import** | Konfigurierbare Tastenkombination (z.B. `Ctrl+Shift+I`) zum sofortigen Import der aktuellen Seite. |
 | **Echter Upload-Fortschritt** | Die Fortschrittsanzeige zeigt den tatsächlichen Upload-Fortschritt (via axios `onUploadProgress`) statt einer Fake-Animation. |
-| **iOS-Glas-Toasts** | Status-Benachrichtigungen im modernen Glasmorphismus-Design mit Backdrop-Blur, halbtransparenten Hintergründen und Spring-Animationen. |
+| **Glass-Benachrichtigungs-Toasts** | Status-Benachrichtigungen im modernen Glasmorphismus-Design mit Backdrop-Blur, halbtransparenten Hintergründen und Spring-Animationen. |
 | **Modernisierte Einstellungsseite** | Neu gestaltete Settings mit Sidebar-Navigation, Card-Layout, Dark/Light-Theme und integriertem Changelog. |
 | **403-Fix (rule34.xxx etc.)** | Content-Uploads enthalten jetzt Credentials und Referer-Header um den CDN-Hotlink-Schutz zu umgehen. |
 | **Octet-Stream-Fix** | Binärdaten werden bei der Nachrichtenübermittlung base64-kodiert, um die Zerstörung von ArrayBuffern in MV3 Service Workern zu verhindern. |
 | **Vorschaubild-Fix** | Vorschaubilder im Popup fallen automatisch auf Blob-URLs zurück, wenn das direkte Laden durch Hotlink-Schutz fehlschlägt. |
 | **MIME-Type-Erkennung** | Dateien mit fehlenden/falschen MIME-Typen (`application/octet-stream`) werden automatisch anhand der Dateiendung erkannt. |
 | **Dateinamen-Erhaltung** | Hochgeladene Dateien behalten ihren originalen Dateinamen aus der Quell-URL. |
+| **Mehrsprachig (EN/DE)** | Die Extension-Oberfläche kann in Einstellungen → Oberfläche zwischen Englisch und Deutsch umgeschaltet werden. |
+| **Tag-Kategorie-Farbwähler** | Tag-Kategorie-Farben können jetzt mit einem nativen Farbwähler-Widget ausgewählt werden. |
+| **"Bereits hochgeladen"-Toast** | Hotkey-/Rechtsklick-Importe zeigen jetzt "Bereits hochgeladen als Post #X" statt eines generischen Fehlers. |
+| **Auto-Relationen** | Posts mit ≥80% Ähnlichkeit werden nach dem Upload automatisch als Relationen verknüpft. |
+| **Import + letzten Post verknüpfen** | Ein zweites konfigurierbares Tastenkürzel importiert die aktuelle Seite und verknüpft sie mit dem zuvor hochgeladenen Post. |
+| **Liquid-UI-Einstellungen** | Die Einstellungsseite bietet ein flüssiges Glas-Design mit Frosted-Transluzenz, fließenden Animationen und moderner Ästhetik. |
 
 ## Installation
 

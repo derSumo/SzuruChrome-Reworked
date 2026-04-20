@@ -5,11 +5,16 @@ import { Post, UpdatePostRequest } from "~/api/models";
 import { isMobile } from "~/env";
 import { BrowserCommand, PostUpdateCommandData, TagDetails } from "~/models";
 import { cfg, useMergeStore, usePopupStore } from "~/stores";
-import { emptyPost, ensurePostHasContentToken, getUrl } from "~/utils";
+import { emptyPost, ensurePostHasContentToken, getErrorMessage, getUrl } from "~/utils";
+import { useI18n, setLanguage, Language } from "~/i18n";
 
 const props = defineProps(["siteId", "postId"]);
 const merge = useMergeStore();
 const pop = usePopupStore();
+const { t } = useI18n();
+
+// Sync language from config
+watch(() => cfg.value.language, (lang) => setLanguage(lang as Language), { immediate: true });
 
 // Why is this cloneDeep needed? Or maybe it isn't?
 const szuruConfig = cloneDeep(cfg.value.sites.find((x) => x.id == props.siteId))!;
@@ -106,13 +111,13 @@ async function mergeChanges() {
 
   if (!scrapedPost) {
     // Should never happend.
-    merge.genericError = "Invalid state. 'scrapedPost' is falsy.";
+    merge.genericError = t("merge.invalidScraped");
     return;
   }
 
   if (!existingPostRo) {
     // Should only happen with an network error I guess?
-    merge.genericError = "Invalid state. 'existingPostRo' is falsy.";
+    merge.genericError = t("merge.invalidExisting");
     return;
   }
 
@@ -124,7 +129,8 @@ async function mergeChanges() {
     req.source = post.value.source;
   }
 
-  const newTags = post.value.tags.map((x) => x.names[0]).concat(tagsToAdd.map((x) => x.name));
+  const newTags = post.value.tags.map((x) => x.names[0]).filter((n) => n && n.trim())
+    .concat(tagsToAdd.map((x) => x.name).filter((n) => n && n.trim()));
 
   if (
     !isEqual(
@@ -147,7 +153,7 @@ async function mergeChanges() {
   }
 
   if (!req.safety && !req.source && !(req.contentUrl || req.contentToken) && req.tags === undefined) {
-    merge.genericError = "No changes to merge.";
+    merge.genericError = t("merge.noChanges");
     return;
   }
 
@@ -159,7 +165,11 @@ async function mergeChanges() {
 
   const cmdData = new PostUpdateCommandData(existingPostRo.id, req, szuruConfig);
   const cmd = new BrowserCommand("update_post", cmdData);
-  await browser.runtime.sendMessage(cmd);
+  try {
+    await browser.runtime.sendMessage(cmd);
+  } catch (ex) {
+    merge.genericError = getErrorMessage(ex);
+  }
 }
 
 watch(
@@ -241,14 +251,14 @@ onMounted(async () => {
 
       <template v-for="data in merge.uploadInfo">
         <div :key="data.postId" v-if="data.info.state == 'uploaded' && data.info.instancePostId" class="bg-success">
-          <a :href="getPostUrl(data.info.instancePostId)">Merged into post {{ data.info.instancePostId }}</a>
+          <a :href="getPostUrl(data.info.instancePostId)">{{ t("merge.mergedInto", { id: data.info.instancePostId }) }}</a>
         </div>
 
-        <div :key="data.postId" v-if="data.info.state == 'uploading'"><span>Merging...</span></div>
+        <div :key="data.postId" v-if="data.info.state == 'uploading'"><span>{{ t("merge.merging") }}</span></div>
 
         <!-- Only show error when it's not undefined and not empty. -->
         <div :key="data.postId" v-if="data.info.error?.length" class="bg-danger">
-          <span>Couldn't merge into post. {{ data.info.error }}</span>
+          <span>{{ t("merge.mergeFailed", { error: data.info.error }) }}</span>
         </div>
       </template>
     </div>
@@ -261,33 +271,33 @@ onMounted(async () => {
           <div style="display: flex; gap: 5px">
             <button class="bg-danger" @click="$router.back()">
               <font-awesome-icon icon="fa-solid fa-chevron-left" class="cursor-pointer" @click="undefined" />
-              Back
+              {{ t("merge.back") }}
             </button>
             <div class="section-header full">
-              <span>Merge into post #{{ props.postId }}</span>
+              <span>{{ t("merge.mergeInto", { id: props.postId }) }}</span>
             </div>
           </div>
 
-          <button class="primary full" @click="mergeChanges">Merge changes</button>
+          <button class="primary full" @click="mergeChanges">{{ t("merge.mergeChanges") }}</button>
         </div>
       </div>
 
-      <PopupSection header="Changes">
+      <PopupSection :header="t('merge.changes')">
         <div class="section-row">
           <ul class="compact-tags">
             <li v-show="tagsToAdd.length != 0 || tagsRemoved != 0">
-              Tags: <span class="success" v-show="tagsToAdd.length != 0">+{{ tagsToAdd.length }}</span>
+              {{ t("merge.tags") }}: <span class="success" v-show="tagsToAdd.length != 0">+{{ tagsToAdd.length }}</span>
               <span class="danger" v-show="tagsRemoved != 0">-{{ tagsRemoved }}</span>
             </li>
             <li v-show="sourcesAdded != 0 || sourcesRemoved != 0">
-              Sources: <span class="success" v-show="sourcesAdded != 0">+2</span>
+              {{ t("merge.sources") }}: <span class="success" v-show="sourcesAdded != 0">+2</span>
               <span class="danger" v-show="sourcesRemoved != 0">-1</span>
             </li>
             <li v-show="existingPostRo?.safety != post.safety">
-              Safety: <s class="danger">{{ existingPostRo?.safety }}</s> <span class="success">{{ post.safety }}</span>
+              {{ t("merge.safety") }}: <s class="danger">{{ existingPostRo?.safety }}</s> <span class="success">{{ post.safety }}</span>
             </li>
             <li v-show="imageToKeep == 'new'">
-              <span class="success">Updating post content</span>
+              <span class="success">{{ t("merge.updatingContent") }}</span>
             </li>
 
             <!-- TODO: Add "No changes" text. -->
@@ -295,36 +305,36 @@ onMounted(async () => {
         </div>
       </PopupSection>
 
-      <PopupSection header="Basic info">
+      <PopupSection :header="t('merge.basicInfo')">
         <div class="section-row">
-          <span class="section-label">Safety</span>
+          <span class="section-label">{{ t("merge.safety") }}</span>
 
           <div style="display: flex; gap: 10px">
             <label>
               <input type="radio" value="safe" v-model="post.safety" />
-              Safe
+              {{ t("merge.safe") }}
             </label>
 
             <label>
               <input type="radio" value="sketchy" v-model="post.safety" />
-              Sketchy
+              {{ t("merge.sketchy") }}
             </label>
 
             <label>
               <input type="radio" value="unsafe" v-model="post.safety" />
-              Unsafe
+              {{ t("merge.unsafe") }}
             </label>
           </div>
         </div>
 
         <div class="section-row">
-          <span class="section-label">Source</span>
+          <span class="section-label">{{ t("merge.source") }}</span>
           <!-- TODO: Fix this -->
           <textarea v-model="post.source"></textarea>
         </div>
       </PopupSection>
 
-      <PopupSection header="Existing tags" toggleable v-model="cfg.merge.expandExistingTags">
+      <PopupSection :header="t('merge.existingTags')" toggleable v-model="cfg.merge.expandExistingTags">
         <div class="section-row">
           <CompactTags
             :tags="post.tags.map((x) => TagDetails.fromMicroTag(x))"
@@ -335,7 +345,7 @@ onMounted(async () => {
         </div>
       </PopupSection>
 
-      <PopupSection header="Tags to add" toggleable v-model="cfg.merge.expandAddTags">
+      <PopupSection :header="t('merge.tagsToAdd')" toggleable v-model="cfg.merge.expandAddTags">
         <div class="section-row">
           <TagInput :szuru="szuru" @add-tag="addTag" />
         </div>
@@ -347,19 +357,19 @@ onMounted(async () => {
     </div>
 
     <div class="popup-right">
-      <PopupSection header="Content">
+      <PopupSection :header="t('merge.content')">
         <div class="section-row">
           <div style="display: flex; gap: 10px; margin: 10px 0">
             <label>
               <input type="radio" value="current" v-model="imageToKeep" />
-              Current ({{ post.canvasWidth }}x{{ post.canvasHeight }})
+              {{ t("merge.current") }} ({{ post.canvasWidth }}x{{ post.canvasHeight }})
             </label>
 
             <!-- TODO: Also display filesize -->
 
             <label>
               <input type="radio" value="new" v-model="imageToKeep" />
-              New ({{ scrapedPost?.resolution?.[0] }}x{{ scrapedPost?.resolution?.[1] }})
+              {{ t("merge.new") }} ({{ scrapedPost?.resolution?.[0] }}x{{ scrapedPost?.resolution?.[1] }})
             </label>
           </div>
 
@@ -367,22 +377,22 @@ onMounted(async () => {
         </div>
       </PopupSection>
 
-      <PopupSection header="Merge options" toggleable v-model="cfg.merge.expandOptions">
+      <PopupSection :header="t('merge.mergeOptions')" toggleable v-model="cfg.merge.expandOptions">
         <div class="section-row">
           <div style="display: flex; flex-direction: column">
             <label>
               <input type="checkbox" v-model="cfg.merge.addMissingTags" />
-              Add missing tags
+              {{ t("merge.addMissingTags") }}
             </label>
 
             <label>
               <input type="checkbox" v-model="cfg.merge.appendSource" />
-              Append source
+              {{ t("merge.appendSource") }}
             </label>
 
             <label>
               <input type="checkbox" v-model="cfg.merge.mergeSafety" />
-              Merge safety
+              {{ t("merge.mergeSafety") }}
             </label>
           </div>
         </div>

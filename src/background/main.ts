@@ -1,4 +1,5 @@
 import { encodeTagName, getErrorMessage } from "~/utils";
+import { t, setLanguage, Language } from "~/i18n";
 import {
   BrowserCommand,
   PostUploadCommandData,
@@ -7,12 +8,16 @@ import {
   SetExactPostId,
   PostUpdateCommandData,
   FetchCommandData,
+  HotkeyImportCommandData,
+  SzuruSiteConfig,
 } from "~/models";
-import { PostAlreadyUploadedError, UpdatePoolRequest } from "~/api/models";
+import { ImageSearchResult, PostAlreadyUploadedError, UpdatePoolRequest, UpdatePostRequest } from "~/api/models";
 import SzurubooruApi from "~/api";
 import { guessMimeTypeFromUrl } from "~/utils";
 
 const QUICK_IMPORT_MENU_ID = "szuru-quick-import-current-page";
+const DEFAULT_AUTO_RELATION_THRESHOLD = 60;
+const lastUploadedPostPerSite = new Map<string, { last?: number; previous?: number }>();
 
 // ── Temporary CORS rule injection via declarativeNetRequest ───────
 // We inject Access-Control-Allow-Origin into CDN responses so that
@@ -61,6 +66,8 @@ type StoredConfig = {
   alwaysUploadAsContent?: boolean;
   addAllParsedTags?: boolean;
   selectedSiteId?: string;
+  language?: string;
+  autoRelationThreshold?: number;
   sites: Array<{ id: string; domain: string; username: string; authToken: string }>;
 };
 
@@ -75,7 +82,7 @@ function tryGetHost(url?: string) {
 
 function resolveSelectedSite(cfg: StoredConfig, tabUrl?: string) {
   if (!cfg.sites || cfg.sites.length == 0) {
-    throw new Error("No instances configured. Please add a Szuru instance in extension options first.");
+    throw new Error(t("bg.noInstances"));
   }
 
   // Preferred: explicit selection from popup/options config.
@@ -112,7 +119,7 @@ async function getActiveTabIdFallback() {
 function sendQuickImportStatus(
   tabId: number,
   status: "running" | "success" | "error" | "progress",
-  data: { message?: string; postId?: number; postUrl?: string; progress?: number } = {},
+  data: { message?: string; postId?: number; postUrl?: string; progress?: number; alreadyUploaded?: boolean } = {},
 ) {
   const payload = new BrowserCommand("quick_import_status", { status, ...data });
   return browser.tabs.sendMessage(tabId, payload).catch(async (ex) => {
@@ -209,11 +216,13 @@ async function grabPostsFromTab(tabId: number): Promise<any> {
 
 function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredConfig) {
   const name = scrapedPost?.name ?? "Post 1";
-  const tags = (scrapedPost?.tags ?? []).map((tag: any) => ({
-    names: [tag.name],
-    category: tag.category,
-    implications: [],
-  }));
+  const tags = (scrapedPost?.tags ?? [])
+    .filter((tag: any) => tag.name && tag.name.trim())
+    .map((tag: any) => ({
+      names: [tag.name],
+      category: tag.category,
+      implications: [],
+    }));
   const source = (scrapedPost?.sources ?? []).join("\n");
 
   const post: any = {
@@ -256,11 +265,12 @@ function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredCo
 
 async function importCurrentPageInBackground(tabId: number, tabUrl?: string) {
   if (isRestrictedTabUrl(tabUrl)) {
-    throw new Error("Cannot import from browser internal pages (chrome://, edge://, about:).");
+    throw new Error(t("bg.restrictedPage"));
   }
 
   const cfg = await readStoredConfig();
-  if (!cfg) throw new Error("Config not found. Open extension options and configure an instance first.");
+  if (!cfg) throw new Error(t("bg.noConfig"));
+  if (cfg.language) setLanguage(cfg.language as Language);
   const selectedSite = resolveSelectedSite(cfg, tabUrl);
   await persistSelectedSite(cfg, selectedSite.id);
 
@@ -268,7 +278,7 @@ async function importCurrentPageInBackground(tabId: number, tabUrl?: string) {
   const firstResultWithPosts = scrapeResults?.results?.find((result: any) => Array.isArray(result.posts) && result.posts.length > 0);
 
   if (!firstResultWithPosts) {
-    throw new Error("No importable media found on this page.");
+    throw new Error(t("bg.noMedia"));
   }
 
   const post = mapScrapedPostForUpload(firstResultWithPosts.posts[0], firstResultWithPosts.engine, cfg);
@@ -276,7 +286,15 @@ async function importCurrentPageInBackground(tabId: number, tabUrl?: string) {
   const info = await uploadPost(uploadData);
 
   if (info.state == "error") {
-    throw new Error(info.error ?? "Background import failed.");
+    if (info.existingPostId) {
+      // Post was already uploaded – treat as success for quick-import.
+      return {
+        info: { ...info, instancePostId: info.existingPostId },
+        selectedSite,
+        alreadyUploaded: true,
+      };
+    }
+    throw new Error(info.error ?? t("bg.importFailed"));
   }
 
   return {
@@ -290,7 +308,7 @@ async function setupContextMenu() {
   await browser.contextMenus.removeAll();
   browser.contextMenus.create({
     id: QUICK_IMPORT_MENU_ID,
-    title: "Import to selected Szuru instance",
+    title: t("bg.contextMenu"),
     contexts: ["page", "image", "video"],
   });
 }
@@ -396,6 +414,61 @@ async function tryAcquireContentToken(
   return undefined;
 }
 
+function getAutoRelationIds(searchResult: ImageSearchResult, createdPostId: number, thresholdPercent: number) {
+  const maxDistance = 1 - thresholdPercent / 100;
+  const relationIds = new Set<number>();
+
+  for (const similar of searchResult.similarPosts) {
+    if (similar.post.id == createdPostId) continue;
+    if (similar.distance <= maxDistance) {
+      relationIds.add(similar.post.id);
+    }
+  }
+
+  return [...relationIds];
+}
+
+async function tryApplyAutoRelations(
+  szuru: SzurubooruApi,
+  createdPostId: number,
+  createdPostVersion: number,
+  relationIds: number[],
+) {
+  if (relationIds.length == 0) return;
+
+  const updateRequest: UpdatePostRequest = {
+    version: createdPostVersion,
+    relations: relationIds,
+  };
+  await szuru.updatePost(createdPostId, updateRequest);
+}
+
+async function tryLinkPostWithLastPostRelation(
+  selectedSite: SzuruSiteConfig,
+  newPostId: number,
+  targetPostId: number,
+) {
+  if (newPostId == targetPostId) return;
+
+  const szuru = SzurubooruApi.createFromConfig(selectedSite);
+  const post = await szuru.getPost(newPostId);
+  const existingRelationIds = post.relations
+    ?.map((x: any) => x?.id)
+    .filter((x: unknown): x is number => typeof x == "number") ?? [];
+
+  if (existingRelationIds.includes(targetPostId)) return;
+
+  await szuru.updatePost(newPostId, {
+    version: post.version,
+    relations: [...existingRelationIds, targetPostId],
+  });
+}
+
+function updateLastUploadedPost(siteId: string, postId: number) {
+  const prev = lastUploadedPostPerSite.get(siteId)?.last;
+  lastUploadedPostPerSite.set(siteId, { previous: prev, last: postId });
+}
+
 async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> {
   const info: PostUploadInfo = {
     state: "uploading",
@@ -438,10 +511,37 @@ async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> 
       // If contentToken is still undefined here → createPost uses contentUrl (URL mode).
     }
 
+    // Reverse search BEFORE createPost – content tokens are single-use and
+    // get consumed by createPost, so we must search while the token is alive.
+    let reverseSearchResult: ImageSearchResult | undefined;
+    try {
+      reverseSearchResult = contentToken
+        ? await szuru.reverseSearchToken(contentToken)
+        : await szuru.reverseSearch(data.post.contentUrl);
+    } catch (ex) {
+      console.warn("Pre-upload reverse search failed (auto-relations):", getErrorMessage(ex));
+    }
+
     const createdPost = await szuru.createPost(data.post, contentToken);
+
+    // Apply auto-relations from the stored reverse search results.
+    if (reverseSearchResult) {
+      try {
+        const storedCfg = await readStoredConfig();
+        const autoRelationsEnabled = storedCfg?.autoRelationsEnabled !== false; // default true
+        const threshold = storedCfg?.autoRelationThreshold ?? DEFAULT_AUTO_RELATION_THRESHOLD;
+        if (autoRelationsEnabled) {
+          const relationIds = getAutoRelationIds(reverseSearchResult, createdPost.id, threshold);
+          await tryApplyAutoRelations(szuru, createdPost.id, createdPost.version, relationIds);
+        }
+      } catch (ex) {
+        console.warn("Auto relation assignment failed:", getErrorMessage(ex));
+      }
+    }
 
     info.state = "uploaded";
     info.instancePostId = createdPost.id;
+    updateLastUploadedPost(data.selectedSite.id, createdPost.id);
     pushInfo();
 
     // Find tags with "default" category and update it
@@ -515,14 +615,16 @@ async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> 
 
     return info;
   } catch (ex: any) {
-    console.error(ex);
     if (ex.name && ex.name == "PostAlreadyUploadedError") {
+      console.info("Post already uploaded:", getErrorMessage(ex));
       const otherPostId = (ex as PostAlreadyUploadedError).otherPostId;
+      info.existingPostId = otherPostId;
       browser.runtime.sendMessage(
         new BrowserCommand("set_exact_post_id", new SetExactPostId(data.selectedSite.id, data.post.id, otherPostId)),
-      );
+      ).catch(() => { /* popup may be closed */ });
       // We don't set an error message, because we have a different message for posts that are already uploaded.
     } else {
+      console.error("Upload failed:", getErrorMessage(ex));
       // Set generic error message.
       info.error = getErrorMessage(ex);
     }
@@ -544,7 +646,7 @@ async function updatePost(data: PostUpdateCommandData) {
         "set_post_update_info",
         new SetPostUploadInfoData(data.selectedSite.id, `merge-${data.postId}`, info),
       ),
-    );
+    ).catch(() => { /* popup may be closed */ });
 
   try {
     const szuru = SzurubooruApi.createFromConfig(data.selectedSite);
@@ -575,17 +677,47 @@ async function executeFetch(data: FetchCommandData) {
 async function handleHotkeyImport(data: { url: string }) {
   // The content script sends us the page URL. We need the active tab ID.
   const tabId = await getActiveTabIdFallback();
-  if (!tabId) throw new Error("No active tab found for hotkey import.");
+  if (!tabId) throw new Error(t("bg.noActiveTab"));
 
   // Run the same import flow as the context menu, with status feedback.
   try {
     const result = await importCurrentPageInBackground(tabId, data.url);
     const postId = result?.info?.instancePostId;
     const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
-    await sendQuickImportStatus(tabId, "success", { postId, postUrl });
+    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded });
   } catch (ex) {
     const message = getErrorMessage(ex);
     console.error("Hotkey import failed:", message);
+    await sendQuickImportStatus(tabId, "error", { message });
+  }
+}
+
+async function handleHotkeyImportLinkLast(data: HotkeyImportCommandData) {
+  const tabId = await getActiveTabIdFallback();
+  if (!tabId) throw new Error(t("bg.noActiveTab"));
+
+  try {
+    const result = await importCurrentPageInBackground(tabId, data.url);
+    const postId = result?.info?.instancePostId;
+    const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
+
+    if (postId) {
+      const lastState = lastUploadedPostPerSite.get(result.selectedSite.id);
+      const previousPostId = lastState?.previous;
+
+      if (previousPostId) {
+        try {
+          await tryLinkPostWithLastPostRelation(result.selectedSite, postId, previousPostId);
+        } catch (ex) {
+          console.warn("Hotkey relation to last post failed:", getErrorMessage(ex));
+        }
+      }
+    }
+
+    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded });
+  } catch (ex) {
+    const message = getErrorMessage(ex);
+    console.error("Hotkey import+link failed:", message);
     await sendQuickImportStatus(tabId, "error", { message });
   }
 }
@@ -603,6 +735,8 @@ async function messageHandler(cmd: BrowserCommand): Promise<any> {
       return executeFetch(cmd.data);
     case "hotkey_import":
       return handleHotkeyImport(cmd.data);
+    case "hotkey_import_link_last":
+      return handleHotkeyImportLinkLast(cmd.data);
   }
 }
 
@@ -612,6 +746,11 @@ browser.runtime.onMessage.addListener(messageHandler);
 void setupContextMenu().catch((ex) => {
   console.error("Failed to initialize context menu:", getErrorMessage(ex));
 });
+
+// Initialize language from stored config
+void readStoredConfig().then((cfg) => {
+  if (cfg?.language) setLanguage(cfg.language as Language);
+}).catch(() => {});
 
 if (browser.contextMenus) {
   browser.runtime.onInstalled.addListener(() => {
@@ -629,7 +768,7 @@ if (browser.contextMenus) {
 
     void (async () => {
       const tabId = tab?.id ?? await getActiveTabIdFallback();
-      if (!tabId) throw new Error("No active tab found for quick import.");
+      if (!tabId) throw new Error(t("bg.noActiveTab").replace("hotkey", "quick"));
       await sendQuickImportStatus(tabId, "running");
       return importCurrentPageInBackground(tabId, tab?.url);
     })()
@@ -640,7 +779,7 @@ if (browser.contextMenus) {
 
         const postId = result?.info?.instancePostId;
         const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
-        await sendQuickImportStatus(tabId, "success", { postId, postUrl });
+        await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result?.alreadyUploaded });
       })
       .catch(async (ex) => {
         const message = getErrorMessage(ex);

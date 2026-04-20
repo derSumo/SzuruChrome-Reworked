@@ -13,6 +13,7 @@ export const cfg = useStorageLocal(
   "config",
   {
     version: 0,
+    language: "en" as "en" | "de",
     addPageUrlToSource: true,
     alwaysUploadAsContent: false,
     autoSearchSimilar: false,
@@ -36,7 +37,7 @@ export const cfg = useStorageLocal(
       expandPools: false,
       showSource: true,
       showPools: true,
-      showInstancePicker: true,
+      tagSortMode: "usage" as "usage" | "category" | "name",
     },
     tagCategories: [] as Array<TagCategoryColor>,
     hotkey: {
@@ -44,6 +45,13 @@ export const cfg = useStorageLocal(
       key: "a",
       modifiers: [] as string[],
     },
+    hotkeyLinkLast: {
+      enabled: false,
+      key: "",
+      modifiers: [] as string[],
+    },
+    autoRelationsEnabled: true,
+    autoRelationThreshold: 60,
   },
   {
     mergeDefaults(storageValue, defaults) {

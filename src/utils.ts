@@ -173,9 +173,6 @@ export function getPostInfoSummary(post: ScrapedPostDetails) {
   if (post.contentSize) {
     parts.push(byteSize(post.contentSize));
   }
-  if (post.contentSubType) {
-    parts.push(post.contentSubType);
-  }
   if (post.resolution) {
     parts.push(resolutionToString(post.resolution));
   }
@@ -247,12 +244,18 @@ export async function ensurePostHasContentToken(selectedInstance: SzurubooruApi,
         throw ex;
       }
 
-      const result: { buffer: ArrayBuffer; mimeType: string } = await fetchViaContentScript(tab.id);
-      if (result.buffer.byteLength < 64) {
+      const result: { base64: string; mimeType: string } = await fetchViaContentScript(tab.id);
+      // Decode base64 back to binary (content script encodes as base64 for safe message passing)
+      const binaryStr = atob(result.base64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      if (bytes.byteLength < 64) {
         throw new Error("Content script returned suspiciously small payload – likely not actual media.");
       }
       const correctedMime = guessMimeTypeFromUrl(post.contentUrl, result.mimeType);
-      const blob = new Blob([result.buffer], { type: correctedMime });
+      const blob = new Blob([bytes], { type: correctedMime });
       const tmpRes = await selectedInstance.uploadTempFileFromBlob(blob);
       instanceSpecificData.contentToken = tmpRes.token;
       return;

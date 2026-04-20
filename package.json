@@ -2,7 +2,7 @@
   "name": "szuruchrome",
   "displayName": "SzuruChrome Reworked",
   "description": "Import media from various sites into szurubooru. Reworked fork with QoL improvements.",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "private": true,
   "scripts": {
     "dev": "npm run clear && cross-env NODE_ENV=development run-p dev:*",
