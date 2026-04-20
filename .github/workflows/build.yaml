@@ -44,12 +44,35 @@ jobs:
           name: Chrome Extension (Unsigned)
           path: extension.zip
 
-  build_unlisted_firefox:
-    name: "Build Unlisted Firefox Extension"
+  build_firefox:
+    name: "Build Firefox Extension (Unsigned XPI)"
     runs-on: ubuntu-24.04
-    # Doesn't really need the Chrome build, but we can reuse its cache.
-    needs: build_chrome
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-for-build
+
+      - name: Build
+        run: pnpm build
+        env:
+          SZ_GECKO_ID: 13372607-2257-4360-8f51-5ce66fa73350
+
+      - name: Pack XPI (unsigned)
+        run: pnpm pack:xpi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Firefox Extension (Unsigned XPI)
+          path: extension.xpi
+
+  build_unlisted_firefox:
+    name: "Build Unlisted Firefox Extension (Signed)"
+    runs-on: ubuntu-24.04
+    needs: build_firefox
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && secrets.WEB_EXT_API_KEY != ''
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,10 +103,8 @@ jobs:
   build_amo_firefox:
     name: "Build Firefox Extension for AMO"
     runs-on: ubuntu-24.04
-    # Doesn't really need the Chrome build, but we can reuse its cache.
-    needs: build_chrome
-    # Only run (on master branch && if tagged) or (manually dispatching).
-    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_amo_listed == true
+    needs: build_firefox
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_amo_listed == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,7 +127,7 @@ jobs:
   create_release:
     name: "Create GitHub Release"
     runs-on: ubuntu-24.04
-    needs: build_chrome
+    needs: [build_chrome, build_firefox]
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
     permissions:
       contents: write
@@ -115,6 +136,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: Chrome Extension (Unsigned)
+          path: artifacts/
+
+      - name: Download Firefox artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Firefox Extension (Unsigned XPI)
           path: artifacts/
 
       - name: Get version from tag
@@ -127,4 +154,6 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "SzuruChrome Reworked ${{ steps.version.outputs.tag }}"
           generate_release_notes: true
-          files: artifacts/extension.zip
+          files: |
+            artifacts/extension.zip
+            artifacts/extension.xpi
