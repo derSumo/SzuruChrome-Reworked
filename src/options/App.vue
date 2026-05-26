@@ -566,6 +566,18 @@ function clearHotkeyLinkLast() {
 
         <div class="card changelog-card">
           <div class="changelog-entry">
+            <div class="changelog-version">v2.3.0</div>
+            <div class="changelog-date">{{ t("changelog.v230.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v230.hotfixFormData") }}</strong> — {{ t("changelog.v230.hotfixFormDataDesc") }}</li>
+              <li><strong>{{ t("changelog.v230.multiStrategyFetch") }}</strong> — {{ t("changelog.v230.multiStrategyFetchDesc") }}</li>
+              <li><strong>{{ t("changelog.v230.declarativeNetRequest") }}</strong> — {{ t("changelog.v230.declarativeNetRequestDesc") }}</li>
+              <li><strong>{{ t("changelog.v230.webRequestReferer") }}</strong> — {{ t("changelog.v230.webRequestRefererDesc") }}</li>
+              <li><strong>{{ t("changelog.v230.toastRestore") }}</strong> — {{ t("changelog.v230.toastRestoreDesc") }}</li>
+            </ul>
+          </div>
+
+          <div class="changelog-entry">
             <div class="changelog-version">v2.2.0</div>
             <div class="changelog-date">{{ t("changelog.v220.date") }}</div>
             <ul class="changelog-list">

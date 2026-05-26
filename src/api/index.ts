@@ -180,18 +180,33 @@ export default class SzurubooruApi {
     const fullUrl = this.apiUrl + "uploads";
     const formData = new FormData();
     formData.append("content", blob, filename ?? "file.bin");
-    const config: AxiosRequestConfig = {
-      method: "POST",
-      url: fullUrl,
-      data: formData,
-    };
-    if (onProgress) {
-      config.onUploadProgress = (e) => {
-        if (e.total && e.total > 0) onProgress(e.loaded / e.total);
-      };
+
+    // Use native fetch() instead of Axios for FormData uploads.
+    // Axios's fetch adapter (used in MV3 service workers) can fail with
+    // "Network Error" for multipart/form-data POSTs in Brave/Chrome due to
+    // CORS handling differences, while native fetch works reliably.
+    // Do NOT set Content-Type — let the browser auto-set it with the correct
+    // multipart boundary; explicitly setting it breaks the request.
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (this.username && this.authToken) {
+      headers["Authorization"] = "Token " + btoa(`${this.username}:${this.authToken}`);
     }
-    config.headers = { ...this.baseHeaders, "Content-Type": "multipart/form-data" };
-    return (await this.execute(config)).data;
+
+    const response = await fetch(fullUrl, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errBody: any;
+      try { errBody = await response.json(); } catch { /* ignore */ }
+      throw errBody?.name ? errBody : new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+
+    const result: TemporaryFileUploadResult = await response.json();
+    onProgress?.(1);
+    return result;
   }
 
   async uploadTempFileFromContent(
@@ -242,18 +257,26 @@ export default class SzurubooruApi {
     const formData = new FormData();
     formData.append("content", content, filename);
 
-    const config: AxiosRequestConfig = {
-      method: "POST",
-      url: fullUrl,
-      data: formData,
-    };
-    if (onProgress) {
-      config.onUploadProgress = (e) => {
-        if (e.total && e.total > 0) onProgress(e.loaded / e.total);
-      };
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (this.username && this.authToken) {
+      headers["Authorization"] = "Token " + btoa(`${this.username}:${this.authToken}`);
     }
-    config.headers = { ...this.baseHeaders, "Content-Type": "multipart/form-data" };
-    return (await this.execute(config)).data;
+
+    const uploadResponse = await fetch(fullUrl, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    if (!uploadResponse.ok) {
+      let errBody: any;
+      try { errBody = await uploadResponse.json(); } catch { /* ignore */ }
+      throw errBody?.name ? errBody : new Error(`HTTP ${uploadResponse.status} ${uploadResponse.statusText}`);
+    }
+
+    const result: TemporaryFileUploadResult = await uploadResponse.json();
+    onProgress?.(1);
+    return result;
   }
 
   static createFromConfig(siteConfig: SzuruSiteConfig): SzurubooruApi {

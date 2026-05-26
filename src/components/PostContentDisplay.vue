@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { PropType } from "vue";
+
 const props = defineProps({
   contentUrl: String,
   notes: {
@@ -6,6 +8,7 @@ const props = defineProps({
     default: () => [],
   },
   contentType: String,
+  fetchViaContentScript: Function as PropType<(url: string) => Promise<{ base64: string; mimeType: string }>>,
 });
 
 const emit = defineEmits(["onResolutionLoaded"]);
@@ -22,21 +25,31 @@ function onloadImage() {
   }
 }
 
-// When the <img> tag fails to load (e.g. CDN hotlink protection blocks the
-// request because the Referer is chrome-extension://), fall back to fetching
-// via the extension's fetch() API (which benefits from host_permissions and
-// doesn't have the same referer restrictions) and create a blob URL.
-function onImageError() {
-  if (props.contentUrl && !blobUrl.value) {
-    fetch(props.contentUrl)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.blob();
-      })
-      .then((blob) => {
-        blobUrl.value = URL.createObjectURL(blob);
-      })
-      .catch((e) => console.error("PostContentDisplay: fetch fallback failed:", e));
+// When the <img> tag fails to load (e.g. CDN hotlink protection), fall back to
+// fetching via the content script (has page cookies + Referer), then the
+// extension's own fetch() as a last resort.
+async function onImageError() {
+  if (!props.contentUrl || blobUrl.value) return;
+
+  if (props.fetchViaContentScript) {
+    try {
+      const { base64, mimeType } = await props.fetchViaContentScript(props.contentUrl);
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      blobUrl.value = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+      return;
+    } catch (e) {
+      console.error("PostContentDisplay: content script fetch failed:", e);
+    }
+  }
+
+  try {
+    const r = await fetch(props.contentUrl);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    blobUrl.value = URL.createObjectURL(await r.blob());
+  } catch (e) {
+    console.error("PostContentDisplay: fetch fallback failed:", e);
   }
 }
 

@@ -29,7 +29,7 @@ export async function getManifest() {
       scripts: ["./dist/assets/background.js"],
       type: "module",
     },
-    permissions: ["storage", "activeTab", "tabs", "scripting", "contextMenus", "declarativeNetRequestWithHostAccess"],
+    permissions: ["storage", "activeTab", "tabs", "scripting", "contextMenus", "declarativeNetRequestWithHostAccess", "webRequest", "webRequestBlocking"],
     host_permissions: ["http://*/*", "https://*/*"],
     content_scripts: [
       {

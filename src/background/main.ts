@@ -19,6 +19,19 @@ const QUICK_IMPORT_MENU_ID = "szuru-quick-import-current-page";
 const DEFAULT_AUTO_RELATION_THRESHOLD = 60;
 const lastUploadedPostPerSite = new Map<string, { last?: number; previous?: number }>();
 
+// Tracks in-flight and recently finished imports so content scripts that
+// load on the next page can restore toasts that were still visible.
+interface ActiveImportEntry {
+  tabId: number;
+  status: "running" | "progress" | "success" | "error";
+  progress?: number;
+  postId?: number;
+  postUrl?: string;
+  alreadyUploaded?: boolean;
+  message?: string;
+}
+const activeImports = new Map<string, ActiveImportEntry>();
+
 // ── Temporary CORS rule injection via declarativeNetRequest ───────
 // We inject Access-Control-Allow-Origin into CDN responses so that
 // the content script (running in the page origin) can cross-origin
@@ -41,6 +54,7 @@ async function addCorsRule(url: string, pageUrl?: string): Promise<number> {
         type: "modifyHeaders",
         responseHeaders: [
           { operation: "set", header: "Access-Control-Allow-Origin", value: origin },
+          { operation: "set", header: "Access-Control-Allow-Credentials", value: "true" },
         ],
       },
       condition: {
@@ -119,8 +133,25 @@ async function getActiveTabIdFallback() {
 function sendQuickImportStatus(
   tabId: number,
   status: "running" | "success" | "error" | "progress",
-  data: { message?: string; postId?: number; postUrl?: string; progress?: number; alreadyUploaded?: boolean } = {},
+  data: { message?: string; postId?: number; postUrl?: string; progress?: number; alreadyUploaded?: boolean; importId?: string } = {},
 ) {
+  const { importId, progress, postId, postUrl, alreadyUploaded, message } = data;
+
+  // Keep activeImports in sync so new content scripts can restore toasts.
+  if (importId) {
+    if (status === "running") {
+      activeImports.set(importId, { tabId, status: "running" });
+    } else if (status === "progress") {
+      const entry = activeImports.get(importId);
+      if (entry) entry.progress = progress;
+      else activeImports.set(importId, { tabId, status: "progress", progress });
+    } else if (status === "success" || status === "error") {
+      activeImports.set(importId, { tabId, status, postId, postUrl, alreadyUploaded, message });
+      // Remove after 15 s — long enough for the next page to load and pick it up.
+      setTimeout(() => activeImports.delete(importId), 15000);
+    }
+  }
+
   const payload = new BrowserCommand("quick_import_status", { status, ...data });
   return browser.tabs.sendMessage(tabId, payload).catch(async (ex) => {
     if (!isMissingContentScriptError(ex)) return;
@@ -263,7 +294,7 @@ function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredCo
   return post;
 }
 
-async function importCurrentPageInBackground(tabId: number, tabUrl?: string) {
+async function importCurrentPageInBackground(tabId: number, tabUrl?: string, importId?: string) {
   if (isRestrictedTabUrl(tabUrl)) {
     throw new Error(t("bg.restrictedPage"));
   }
@@ -282,7 +313,7 @@ async function importCurrentPageInBackground(tabId: number, tabUrl?: string) {
   }
 
   const post = mapScrapedPostForUpload(firstResultWithPosts.posts[0], firstResultWithPosts.engine, cfg);
-  const uploadData = new PostUploadCommandData(post, selectedSite, tabId);
+  const uploadData = new PostUploadCommandData(post, selectedSite, tabId, importId);
   const info = await uploadPost(uploadData);
 
   if (info.state == "error") {
@@ -314,13 +345,23 @@ async function setupContextMenu() {
 }
 
 async function fetchContentViaContentScript(tabId: number, url: string): Promise<{ base64: string; mimeType: string }> {
-  try {
-    return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url }));
-  } catch (ex) {
-    if (!isMissingContentScriptError(ex)) throw ex;
-    await ensureContentScriptLoaded(tabId);
-    return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url }));
-  }
+  const FETCH_TIMEOUT_MS = 30_000;
+
+  const msgPromise = (async () => {
+    try {
+      return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url }));
+    } catch (ex) {
+      if (!isMissingContentScriptError(ex)) throw ex;
+      await ensureContentScriptLoaded(tabId);
+      return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url }));
+    }
+  })();
+
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Content-script fetch timed out after ${FETCH_TIMEOUT_MS / 1000}s`)), FETCH_TIMEOUT_MS),
+  );
+
+  return Promise.race([msgPromise, timeoutPromise]);
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
@@ -402,12 +443,17 @@ async function tryAcquireContentToken(
   }
 
   // 2) Try background-side content fetch with credentials/referrer.
+  //    Inject a CORS rule so the background fetch can read the CDN response,
+  //    mirroring the same approach used in step 1 for content script fetches.
   for (const candidateUrl of candidates) {
+    const ruleId = await addCorsRule(candidateUrl, data.post.pageUrl).catch(() => 0);
     try {
       const tmpRes = await szuru.uploadTempFile(candidateUrl, "content", data.post.referrer ?? data.post.pageUrl, onProgress);
       return tmpRes.token;
     } catch (ex) {
       console.warn("Background content fetch/upload failed for candidate URL:", candidateUrl, ex);
+    } finally {
+      await removeCorsRule(ruleId);
     }
   }
 
@@ -487,7 +533,7 @@ async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> 
     // Throttle: only send if progress changed by at least 2%
     if (data.tabId && (progress - lastProgressSent >= 0.02 || progress >= 1)) {
       lastProgressSent = progress;
-      sendQuickImportStatus(data.tabId, "progress", { progress });
+      sendQuickImportStatus(data.tabId, "progress", { progress, importId: data.importId });
     }
   };
 
@@ -674,30 +720,32 @@ async function executeFetch(data: FetchCommandData) {
   return await fetch(data.url, data.options);
 }
 
-async function handleHotkeyImport(data: { url: string }) {
+async function handleHotkeyImport(data: { url: string; importId?: string }) {
   // The content script sends us the page URL. We need the active tab ID.
   const tabId = await getActiveTabIdFallback();
   if (!tabId) throw new Error(t("bg.noActiveTab"));
+  const importId = data.importId;
 
   // Run the same import flow as the context menu, with status feedback.
   try {
-    const result = await importCurrentPageInBackground(tabId, data.url);
+    const result = await importCurrentPageInBackground(tabId, data.url, importId);
     const postId = result?.info?.instancePostId;
     const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
-    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded });
+    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded, importId });
   } catch (ex) {
     const message = getErrorMessage(ex);
     console.error("Hotkey import failed:", message);
-    await sendQuickImportStatus(tabId, "error", { message });
+    await sendQuickImportStatus(tabId, "error", { message, importId });
   }
 }
 
 async function handleHotkeyImportLinkLast(data: HotkeyImportCommandData) {
   const tabId = await getActiveTabIdFallback();
   if (!tabId) throw new Error(t("bg.noActiveTab"));
+  const importId = data.importId;
 
   try {
-    const result = await importCurrentPageInBackground(tabId, data.url);
+    const result = await importCurrentPageInBackground(tabId, data.url, importId);
     const postId = result?.info?.instancePostId;
     const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
 
@@ -714,15 +762,15 @@ async function handleHotkeyImportLinkLast(data: HotkeyImportCommandData) {
       }
     }
 
-    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded });
+    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded, importId });
   } catch (ex) {
     const message = getErrorMessage(ex);
     console.error("Hotkey import+link failed:", message);
-    await sendQuickImportStatus(tabId, "error", { message });
+    await sendQuickImportStatus(tabId, "error", { message, importId });
   }
 }
 
-async function messageHandler(cmd: BrowserCommand): Promise<any> {
+async function messageHandler(cmd: BrowserCommand, sender: any): Promise<any> {
   console.log("Background received message:");
   console.dir(cmd);
 
@@ -737,10 +785,125 @@ async function messageHandler(cmd: BrowserCommand): Promise<any> {
       return handleHotkeyImport(cmd.data);
     case "hotkey_import_link_last":
       return handleHotkeyImportLinkLast(cmd.data);
+    case "get_active_imports": {
+      const tabId = sender?.tab?.id;
+      const result: Array<ActiveImportEntry & { importId: string }> = [];
+      for (const [importId, entry] of activeImports) {
+        if (entry.tabId === tabId) result.push({ importId, ...entry });
+      }
+      return result;
+    }
   }
 }
 
 browser.runtime.onMessage.addListener(messageHandler);
+
+// ── Native Referer injection for extension popup image loads ────────────────
+// When the popup's <img> tag tries to load a CDN-protected image (e.g.
+// img2.gelbooru.com), the browser sends the extension origin as Referer, which
+// gets blocked. We intercept those requests and replace the Referer with the
+// CDN's own parent domain so the hotlink check passes natively.
+// This also covers background-service-worker fetches (tabId === -1) to the same
+// CDN hosts so that tryAcquireContentToken's direct-fetch fallback sends a valid Referer.
+if ((browser as any).webRequest?.onBeforeSendHeaders) {
+  const CDN_HOSTS: Record<string, string> = {
+    "img2.gelbooru.com":   "https://gelbooru.com/",
+    "img3.gelbooru.com":   "https://gelbooru.com/",
+    "wimg.rule34.xxx":     "https://rule34.xxx/",
+    "us.rule34.xxx":       "https://rule34.xxx/",
+  };
+
+  try {
+    (browser as any).webRequest.onBeforeSendHeaders.addListener(
+      (details: any) => {
+        // Only modify requests from the extension popup/background page (tabId === -1).
+        // Content script requests run in web page tabs (tabId >= 0) and already carry
+        // the correct Referer via referrerPolicy:"unsafe-url" — don't touch those.
+        if (details.tabId !== -1) return {};
+        try {
+          const host = new URL(details.url).hostname;
+          const spoofedReferer = CDN_HOSTS[host]
+            ?? (host.endsWith(".rule34.xxx") ? "https://rule34.xxx/" : undefined)
+            ?? (host.endsWith(".gelbooru.com") ? "https://gelbooru.com/" : undefined);
+          if (!spoofedReferer) return {};
+          const headers: Array<{ name: string; value: string }> = details.requestHeaders ?? [];
+          const idx = headers.findIndex((h: any) => h.name.toLowerCase() === "referer");
+          if (idx >= 0) {
+            headers[idx] = { name: "Referer", value: spoofedReferer };
+          } else {
+            headers.push({ name: "Referer", value: spoofedReferer });
+          }
+          return { requestHeaders: headers };
+        } catch {
+          return {};
+        }
+      },
+      { urls: ["<all_urls>"] },
+      ["blocking", "requestHeaders"],
+    );
+  } catch (ex) {
+    console.warn("webRequest.onBeforeSendHeaders blocking not available:", ex);
+  }
+}
+
+// Inject CORS headers into CDN responses so content-script fetch() calls
+// (running in the page context) can read image bytes cross-origin.
+// This is a fallback for Firefox versions where declarativeNetRequest.updateSessionRules
+// is unavailable. Both mechanisms are harmless when active simultaneously.
+//
+// We use a hardcoded host→origin map so the correct Access-Control-Allow-Origin
+// is always injected regardless of whether details.originUrl is populated,
+// preventing a wrong Gelbooru default being applied to rule34.xxx requests.
+if ((browser as any).webRequest?.onHeadersReceived) {
+  const CDN_CORS_ORIGIN_MAP: Record<string, string> = {
+    "img2.gelbooru.com": "https://gelbooru.com",
+    "img3.gelbooru.com": "https://gelbooru.com",
+    "wimg.rule34.xxx":   "https://rule34.xxx",
+    "us.rule34.xxx":     "https://rule34.xxx",
+  };
+
+  try {
+    (browser as any).webRequest.onHeadersReceived.addListener(
+      (details: any) => {
+        const headers: Array<{ name: string; value: string }> = [...(details.responseHeaders ?? [])];
+        if (headers.some((h: any) => h.name.toLowerCase() === "access-control-allow-origin")) {
+          return {};
+        }
+        let host: string;
+        try {
+          host = new URL(details.url).hostname.toLowerCase();
+        } catch {
+          return {};
+        }
+        // Use hardcoded mapping first, then wildcard subdomain fallback.
+        let origin: string | undefined = CDN_CORS_ORIGIN_MAP[host];
+        if (!origin && host.endsWith(".rule34.xxx")) origin = "https://rule34.xxx";
+        if (!origin && host.endsWith(".gelbooru.com")) origin = "https://gelbooru.com";
+        // Fall back to originUrl for any other unlisted hosts.
+        if (!origin) {
+          try {
+            if (details.originUrl) origin = new URL(details.originUrl).origin;
+          } catch { /* ignore */ }
+        }
+        if (!origin) return {};
+        headers.push({ name: "Access-Control-Allow-Origin", value: origin });
+        headers.push({ name: "Access-Control-Allow-Credentials", value: "true" });
+        return { responseHeaders: headers };
+      },
+      {
+        urls: [
+          "*://img2.gelbooru.com/*",
+          "*://img3.gelbooru.com/*",
+          "*://*.rule34.xxx/*",
+        ],
+        types: ["xmlhttprequest"],
+      },
+      ["blocking", "responseHeaders"],
+    );
+  } catch (ex) {
+    console.warn("webRequest.onHeadersReceived CORS injection not available:", ex);
+  }
+}
 
 // Also initialize on worker start; install/startup listeners may not fire on every restart.
 void setupContextMenu().catch((ex) => {
@@ -765,12 +928,13 @@ if (browser.contextMenus) {
 
   browser.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId !== QUICK_IMPORT_MENU_ID) return;
+    const importId = crypto.randomUUID();
 
     void (async () => {
       const tabId = tab?.id ?? await getActiveTabIdFallback();
       if (!tabId) throw new Error(t("bg.noActiveTab").replace("hotkey", "quick"));
-      await sendQuickImportStatus(tabId, "running");
-      return importCurrentPageInBackground(tabId, tab?.url);
+      await sendQuickImportStatus(tabId, "running", { importId });
+      return importCurrentPageInBackground(tabId, tab?.url, importId);
     })()
       .then(async (result) => {
         console.log("Background quick import succeeded:", result);
@@ -779,14 +943,14 @@ if (browser.contextMenus) {
 
         const postId = result?.info?.instancePostId;
         const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
-        await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result?.alreadyUploaded });
+        await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result?.alreadyUploaded, importId });
       })
       .catch(async (ex) => {
         const message = getErrorMessage(ex);
         console.error("Background quick import failed:", message);
         const tabId = tab?.id ?? await getActiveTabIdFallback();
         if (!tabId) return;
-        await sendQuickImportStatus(tabId, "error", { message });
+        await sendQuickImportStatus(tabId, "error", { message, importId });
       });
   });
 }

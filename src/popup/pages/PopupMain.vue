@@ -459,25 +459,63 @@ async function loadTagCounts() {
   }
 }
 
+async function fetchContentViaActiveTab(url: string): Promise<{ base64: string; mimeType: string }> {
+  const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
+  const activeTabId = activeTabs[0]?.id;
+  const activeTabUrl = activeTabs[0]?.url;
+  if (!activeTabId) throw new Error("No active tab");
+  if (isRestrictedTabUrl(activeTabUrl)) throw new Error("Active tab is a restricted URL");
+  try {
+    return await browser.tabs.sendMessage(activeTabId, new BrowserCommand("fetch_content", { url }));
+  } catch (ex) {
+    if (!isMissingContentScriptError(ex)) throw ex;
+    await ensureContentScriptLoaded(activeTabId);
+    return await browser.tabs.sendMessage(activeTabId, new BrowserCommand("fetch_content", { url }));
+  }
+}
+
 async function updatePostWithRemoteInfo(post: ScrapedPostDetails, contentUrl: string) {
   try {
-    const res = await fetch(contentUrl, { method: "HEAD" });
-    const size = res.headers.get("Content-Length");
-    const type = res.headers.get("Content-Type");
+    const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const activeTabId = activeTabs[0]?.id;
 
-    if (type) {
-      if (type.indexOf("text/html") != -1) {
+    let contentType: string | undefined;
+    let contentLength: string | undefined;
+    let finalUrl: string | undefined;
+
+    // Try via content script first — it runs in page context with page cookies +
+    // Referer, bypassing CDN hotlink protection (e.g. Gelbooru).
+    if (activeTabId) {
+      try {
+        const info: any = await browser.tabs.sendMessage(activeTabId, new BrowserCommand("fetch_head_info", { url: contentUrl }));
+        contentType = info?.contentType;
+        contentLength = info?.contentLength;
+        finalUrl = info?.finalUrl;
+      } catch { /* fall through */ }
+    }
+
+    // Fallback: direct fetch from popup context (works for non-CDN-protected sources)
+    if (!contentType) {
+      const res = await fetch(contentUrl, { method: "HEAD" });
+      contentType = res.headers.get("Content-Type") ?? undefined;
+      contentLength = res.headers.get("Content-Length") ?? undefined;
+      finalUrl = res.url !== contentUrl ? res.url : undefined;
+    }
+
+    if (contentType) {
+      if (contentType.indexOf("text/html") != -1) {
         throw new Error("Received a text/html content type. Probably no permission to access the resource.");
       }
-      const [_main, sub] = type.split("/");
+      const [_main, sub] = contentType.split("/");
       if (sub) post.contentSubType = sub.toUpperCase();
     }
 
-    if (size) post.contentSize = parseInt(size);
+    if (contentLength) post.contentSize = parseInt(contentLength);
 
-    if (res.url != post.contentUrl) {
-      console.log(`Updating post.contentUrl to '${res.url}'`);
-      post.contentUrl = res.url;
+    const resolvedUrl = finalUrl ?? contentUrl;
+    if (resolvedUrl != post.contentUrl) {
+      console.log(`Updating post.contentUrl to '${resolvedUrl}'`);
+      post.contentUrl = resolvedUrl;
     }
 
     return true;
@@ -520,6 +558,21 @@ function getFormatChipClass(format?: string): string {
   return 'glass-chip-image';
 }
 
+// Force exact popup-window size to avoid Firefox caching the old 780px width.
+// `html { width: max-content }` resolves to viewport width (= cached popup size),
+// so we set the inline style explicitly instead.
+function applyPopupSize() {
+  const html = document.documentElement;
+  if (pop.selectedPost) {
+    html.style.width = "780px";
+    html.style.height = "540px";
+  } else {
+    html.style.width = "530px";
+    html.style.height = "93px";
+  }
+}
+watch(() => pop.selectedPost, applyPopupSize, { immediate: true });
+
 onMounted(() => {
   checkServerStatus();
   if (pop.posts.length == 0) {
@@ -539,20 +592,112 @@ useDark();
 </script>
 
 <template>
-  <!-- â”€â”€ Empty state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-  <div v-if="!pop.selectedPost" class="glass-empty">
-    <div class="glass-empty-inner">
-      <div class="glass-orb"><span></span></div>
-      <div class="glass-empty-text">
-        <span class="glass-eyebrow">{{ selectedSite?.domain || "Szuru" }}</span>
-        <strong>{{ t("popup.noContent") }}</strong>
-        <span v-if="scrapeError" class="glass-error-text">{{ scrapeError }}</span>
+  <!-- Compact: no content / restricted page view -->
+  <div v-if="!pop.selectedPost" class="glass-compact" :class="{ mobile: isMobile }">
+
+    <!-- Row 1: brand · server picker · settings -->
+    <div class="gc-bar">
+      <div class="gc-brand">
+        <img :src="extIconUrl" class="glass-ext-icon" alt="" />
+        <span class="gc-brand-name">SzuruChrome</span>
+      </div>
+      <div class="gc-controls">
+        <!-- Server picker (same markup as main popup) -->
+        <div class="glass-server-picker" v-if="cfg.sites.length > 0" ref="pillRef">
+          <div
+            class="glass-server-pill"
+            :class="{ expanded: serverExpanded, open: serverDropdownOpen }"
+            @click.stop="onPillClick"
+            :title="!serverExpanded ? (selectedSite?.domain ?? 'Server wählen') : ''"
+          >
+            <span class="glass-server-pill-icon">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <rect x="1.5" y="2" width="13" height="4" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                <rect x="1.5" y="10" width="13" height="4" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                <line x1="1.5" y1="7" x2="14.5" y2="7" stroke="currentColor" stroke-width="1.2"/>
+                <circle cx="12" cy="4" r="1" fill="currentColor"/>
+                <circle cx="12" cy="12" r="1" fill="currentColor"/>
+              </svg>
+            </span>
+            <span class="glass-server-pill-content">
+              <span class="glass-server-pill-dot" :class="serverOnline === true ? 'online' : serverOnline === false ? 'offline' : ''"></span>
+              <span class="glass-server-pill-domain">{{ selectedSite?.domain ?? '—' }}</span>
+            </span>
+            <button class="glass-server-pill-collapse" @click.stop="collapseServer" tabindex="-1">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M3.5 2l3.5 3-3.5 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          <Teleport to="body">
+            <Transition name="server-dropdown">
+              <div
+                v-if="serverDropdownOpen"
+                class="glass-server-dropdown"
+                :style="{ top: dropdownPos.top + 'px', right: dropdownPos.right + 'px' }"
+                @click.stop
+              >
+                <div class="glass-server-dropdown-header">Server</div>
+                <button
+                  v-for="site in cfg.sites"
+                  :key="site.id"
+                  class="glass-server-option"
+                  :class="{ active: site.id === cfg.selectedSiteId }"
+                  @click="selectSite(site.id)"
+                >
+                  <span class="glass-server-option-dot" :class="site.id === cfg.selectedSiteId && serverOnline === true ? 'online' : site.id === cfg.selectedSiteId && serverOnline === false ? 'offline' : ''"></span>
+                  <span class="glass-server-option-domain">{{ site.domain }}</span>
+                  <svg v-if="site.id === cfg.selectedSiteId" class="glass-server-option-check" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            </Transition>
+          </Teleport>
+        </div>
+
+        <button class="glass-icon-btn" @click="openOptionsPage" title="Settings">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M8 1v1.5M8 13.5V15M15 8h-1.5M2.5 8H1M12.95 3.05l-1.06 1.06M4.11 11.89l-1.06 1.06M12.95 12.95l-1.06-1.06M4.11 4.11L3.05 3.05" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
     </div>
-    <button class="glass-icon-btn" @click="openOptionsPage" title="Settings">⚙</button>
+
+    <!-- Row 2: status message · hotkey toggles -->
+    <div class="gc-info-row">
+      <span class="gc-status-msg" :class="{ 'gc-status-error': !!scrapeError }" :title="scrapeError || t('popup.noContent')">
+        {{ scrapeError || t("popup.noContent") }}
+      </span>
+      <div class="gc-hotkeys">
+        <label class="glass-toggle-pill" :title="t('popup.hotkeyToggle')">
+          <svg class="glass-toggle-icon" viewBox="0 0 16 16" fill="none">
+            <rect x="1" y="3.5" width="14" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+            <rect x="3" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="7" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="11" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="3" y="8.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="5.5" y="8.5" width="5" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="11" y="8.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+          </svg>
+          <input type="checkbox" v-model="cfg.hotkey.enabled" />
+          <span class="glass-toggle-track"><span class="glass-toggle-knob"></span></span>
+        </label>
+        <label class="glass-toggle-pill" :title="t('popup.hotkeyLinkLastToggle')">
+          <svg class="glass-toggle-icon" viewBox="0 0 16 16" fill="none">
+            <path d="M6.5 9.5a3.5 3.5 0 005 0l2-2a3.5 3.5 0 00-5-5L7.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <path d="M9.5 6.5a3.5 3.5 0 00-5 0l-2 2a3.5 3.5 0 005 5l1-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <input type="checkbox" v-model="cfg.hotkeyLinkLast.enabled" />
+          <span class="glass-toggle-track"><span class="glass-toggle-knob"></span></span>
+        </label>
+      </div>
+    </div>
+
   </div>
 
-  <!-- â”€â”€ Main popup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  <!-- â"€â"€ Main popup â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€ -->
   <div v-else class="glass-root" :class="{ mobile: isMobile }">
 
     <!-- Top chrome bar -->
@@ -745,6 +890,7 @@ useDark();
           <PostContentDisplay
             :content-url="pop.selectedPost.contentUrl"
             :content-type="pop.selectedPost.contentType"
+            :fetch-via-content-script="fetchContentViaActiveTab"
             @on-resolution-loaded="onResolutionLoaded"
           />
         </div>
@@ -806,7 +952,8 @@ useDark();
 
 /* â”€â”€ Design tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .glass-root,
-.glass-empty {
+.glass-empty,
+.glass-compact {
   --g-bg: rgba(13, 16, 23, 0.88);
   --g-surface: rgba(255, 255, 255, 0.055);
   --g-surface-hi: rgba(255, 255, 255, 0.085);
@@ -1806,6 +1953,89 @@ useDark();
 
 .tag-fade-enter-from,
 .tag-fade-leave-to { opacity: 0; transform: translateY(3px); }
+
+/* â”€â”€ Compact “no content” shell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.glass-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 530px;
+  height: 93px;
+  padding: 10px 8px;
+  background: var(--g-bg);
+  color: var(--g-text);
+  font-size: 12.5px;
+  line-height: 1.45;
+  box-sizing: border-box;
+  overflow: hidden;
+  animation: g-enter 250ms var(--g-ease) both;
+
+  &.mobile { width: 100%; height: auto; }
+}
+
+.gc-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(24px) saturate(130%);
+  -webkit-backdrop-filter: blur(24px) saturate(130%);
+  border: 1px solid var(--g-border);
+  border-radius: var(--g-radius-md);
+}
+
+.gc-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.gc-brand-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-text-2);
+  white-space: nowrap;
+}
+
+.gc-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.gc-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--g-border);
+  border-radius: var(--g-radius-md);
+}
+
+.gc-status-msg {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--g-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &.gc-status-error { color: #fca5a5; }
+}
+
+.gc-hotkeys {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
 
 /* â”€â”€ Empty state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .glass-empty {

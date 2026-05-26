@@ -155,6 +155,7 @@ export default {
   "merge.basicInfo": "Basis-Infos",
 
   // ── Toast (Content-Script) ────────────────────────────
+  "toast.importing": "Wird importiert…",
   "toast.imported": "✔ {link} erfolgreich importiert",
   "toast.alreadyUploaded": "ℹ Bereits hochgeladen als {link}",
   "toast.importFailed": "✘ Import fehlgeschlagen: {message}",
@@ -170,6 +171,18 @@ export default {
 
   // ── Changelog ─────────────────────────────────────────
   "changelog.title": "Changelog",
+
+  "changelog.v230.date": "Mai 2026",
+  "changelog.v230.hotfixFormData": "Hotkey-Import in Brave/Chrome behoben (MV3)",
+  "changelog.v230.hotfixFormDataDesc": "Hotkey-Importe auf CDN-geschützten Seiten (z.B. rule34.xxx) funktionieren jetzt in Brave und Chrome. Ursache: Der Axios-Fetch-Adapter in MV3 Service Workern schlug bei Multipart-FormData-Uploads lautlos fehl. Alle Temp-File-Uploads verwenden jetzt natives fetch().",
+  "changelog.v230.multiStrategyFetch": "Mehrstufiger CDN-Fetch im Content Script",
+  "changelog.v230.multiStrategyFetchDesc": "Das Content Script versucht jetzt drei Methoden, um CDN-Hotlink-Schutz zu umgehen: einfaches Fetch mit vollem Referer, Fetch mit Cookies + Referer, und zuletzt XHR mit Credentials (Firefox CORS-Bypass via host_permissions).",
+  "changelog.v230.declarativeNetRequest": "declarativeNetRequest CORS-Injektion (Chrome/Brave)",
+  "changelog.v230.declarativeNetRequestDesc": "Session-Regeln werden dynamisch via declarativeNetRequest.updateSessionRules injiziert, um CORS-Header zu CDN-Antworten hinzuzufügen, damit das Content Script Bilddaten Cross-Origin in Chrome/Brave lesen kann.",
+  "changelog.v230.webRequestReferer": "webRequest Referer- & CORS-Injektion (Firefox)",
+  "changelog.v230.webRequestRefererDesc": "onBeforeSendHeaders ersetzt jetzt den Referer durch den eigenen CDN-Origin bei Anfragen aus dem Extension-Kontext, und onHeadersReceived injiziert CORS-Header für rule34.xxx- und Gelbooru-CDNs.",
+  "changelog.v230.toastRestore": "Toast-Wiederherstellung nach Seitennavigation",
+  "changelog.v230.toastRestoreDesc": "Import-Status-Toasts (Wird importiert, Erfolg, Fehler) werden jetzt beim Navigieren auf eine neue Seite während eines aktiven Imports wiederhergestellt, sodass laufende und abgeschlossene Importe immer sichtbar sind.",
 
   "changelog.v220.date": "April 2026",
   "changelog.v220.autoRelationsToggle": "Auto-Relationen An/Aus-Schalter",

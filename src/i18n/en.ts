@@ -155,6 +155,7 @@ export default {
   "merge.basicInfo": "Basic info",
 
   // ── Toast (content script) ────────────────────────────
+  "toast.importing": "Importing…",
   "toast.imported": "✔ {link} imported successfully",
   "toast.alreadyUploaded": "ℹ Already uploaded as {link}",
   "toast.importFailed": "✘ Import failed: {message}",
@@ -170,6 +171,18 @@ export default {
 
   // ── Changelog ─────────────────────────────────────────
   "changelog.title": "Changelog",
+
+  "changelog.v230.date": "May 2026",
+  "changelog.v230.hotfixFormData": "Fixed Hotkey Import in Brave/Chrome (MV3)",
+  "changelog.v230.hotfixFormDataDesc": "Hotkey imports on CDN-protected sites (e.g. rule34.xxx) now work in Brave and Chrome. Root cause: Axios's fetch adapter in MV3 service workers silently failed on multipart FormData uploads. All temp-file uploads now use native fetch() instead.",
+  "changelog.v230.multiStrategyFetch": "Multi-Strategy CDN Fetch in Content Script",
+  "changelog.v230.multiStrategyFetchDesc": "The content script now tries three approaches to bypass CDN hotlink protection: plain fetch with full Referer, fetch with cookies + Referer, and finally XHR with credentials (Firefox CORS bypass via host_permissions).",
+  "changelog.v230.declarativeNetRequest": "declarativeNetRequest CORS Injection (Chrome/Brave)",
+  "changelog.v230.declarativeNetRequestDesc": "Session rules are dynamically injected via declarativeNetRequest.updateSessionRules to add CORS headers to CDN responses, allowing the content script to read image bytes cross-origin in Chrome/Brave.",
+  "changelog.v230.webRequestReferer": "webRequest Referer & CORS Injection (Firefox)",
+  "changelog.v230.webRequestRefererDesc": "onBeforeSendHeaders now replaces the Referer with the CDN's own origin for requests from the extension context, and onHeadersReceived injects CORS headers for rule34.xxx and Gelbooru CDNs.",
+  "changelog.v230.toastRestore": "Toast Restoration After Page Navigation",
+  "changelog.v230.toastRestoreDesc": "Import status toasts (importing, success, error) are now restored when navigating to a new page during an active import, so in-progress and completed imports are always visible.",
 
   "changelog.v220.date": "April 2026",
   "changelog.v220.autoRelationsToggle": "Auto-Relations On/Off Toggle",

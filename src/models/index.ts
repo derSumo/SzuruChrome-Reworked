@@ -135,9 +135,11 @@ export type BrowserCommandName =
   | "set_post_update_info"
   | "fetch"
   | "fetch_content"
+  | "fetch_head_info"
   | "quick_import_status"
   | "hotkey_import"
-  | "hotkey_import_link_last";
+  | "hotkey_import_link_last"
+  | "get_active_imports";
 
 export class BrowserCommand<T = any> {
   name: BrowserCommandName;
@@ -154,6 +156,7 @@ export class PostUploadCommandData {
     public readonly post: ScrapedPostDetails,
     public readonly selectedSite: SzuruSiteConfig,
     public readonly tabId?: number,
+    public readonly importId?: string,
   ) { }
 }
 
@@ -192,6 +195,7 @@ export class HotkeyImportCommandData {
   constructor(
     public readonly url: string,
     public readonly linkWithLastPost = false,
+    public readonly importId?: string,
   ) { }
 }
 
