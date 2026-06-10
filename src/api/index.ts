@@ -217,7 +217,7 @@ export default class SzurubooruApi {
     const fetchOptions: RequestInit = {
       credentials: "include",
       // "unsafe-url" sends the full URL (path + query) as Referer for cross-origin
-      // requests, which is required to pass hotlink protection on sites like rule34.xxx.
+      // requests, which is required to pass hotlink protection on some booru CDNs.
       referrerPolicy: "unsafe-url",
     };
     if (referrer) {

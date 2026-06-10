@@ -50,6 +50,38 @@ interface ActiveImportEntry {
 }
 const activeImports = new Map<string, ActiveImportEntry>();
 
+// Derive the registrable (parent) domain from a host so we can build a
+// same-site Referer/Origin for hotlink-protected CDNs (e.g. an image host on a
+// subdomain) without hardcoding any specific site. Handles the common
+// second-level public suffixes (e.g. "co.uk", "com.au").
+const MULTI_PART_SLDS = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "or", "ne", "go"]);
+function registrableDomain(host: string): string {
+  const labels = host.toLowerCase().replace(/^www\./, "").split(".");
+  if (labels.length <= 2) return labels.join(".");
+  const sld = labels[labels.length - 2];
+  if (MULTI_PART_SLDS.has(sld) && labels.length >= 3) return labels.slice(-3).join(".");
+  return labels.slice(-2).join(".");
+}
+
+// Registrable domains of content URLs currently being fetched during an import.
+// The webRequest CORS fallback only injects headers for hosts in this set, so it
+// never acts as a browser-wide CORS bypass on unrelated traffic.
+const activeImportHosts = new Set<string>();
+
+function beginImportHost(url: string): string | undefined {
+  try {
+    const base = registrableDomain(new URL(url).hostname);
+    activeImportHosts.add(base);
+    return base;
+  } catch {
+    return undefined;
+  }
+}
+
+function endImportHost(base: string | undefined) {
+  if (base) activeImportHosts.delete(base);
+}
+
 // ── Temporary CORS rule injection via declarativeNetRequest ───────
 // We inject Access-Control-Allow-Origin into CDN responses so that
 // the content script (running in the page origin) can cross-origin
@@ -108,7 +140,7 @@ type StoredConfig = {
 function normalizeHost(value?: string): string | undefined {
   if (!value) return undefined;
   try {
-    // Allow either bare hosts ("rule34.xxx") or full URLs.
+    // Allow either bare hosts ("example.com") or full URLs.
     const url = value.includes("://") ? new URL(value) : new URL("https://" + value);
     return url.host.toLowerCase().replace(/^www\./, "");
   } catch {
@@ -466,6 +498,7 @@ async function tryAcquireContentToken(
   if (data.tabId) {
     for (const candidateUrl of candidates) {
       const ruleId = await addCorsRule(candidateUrl, data.post.pageUrl).catch(() => 0);
+      const importHost = beginImportHost(candidateUrl);
       try {
         const result = await fetchContentViaContentScript(data.tabId, candidateUrl, data.importId);
 
@@ -495,6 +528,7 @@ async function tryAcquireContentToken(
         console.warn("Content script fetch/upload failed for candidate URL:", candidateUrl, ex);
       } finally {
         await removeCorsRule(ruleId);
+        endImportHost(importHost);
       }
     }
   }
@@ -504,6 +538,7 @@ async function tryAcquireContentToken(
   //    mirroring the same approach used in step 1 for content script fetches.
   for (const candidateUrl of candidates) {
     const ruleId = await addCorsRule(candidateUrl, data.post.pageUrl).catch(() => 0);
+    const importHost = beginImportHost(candidateUrl);
     try {
       const tmpRes = await szuru.uploadTempFile(candidateUrl, "content", data.post.referrer ?? data.post.pageUrl, onProgress);
       return tmpRes.token;
@@ -511,6 +546,7 @@ async function tryAcquireContentToken(
       console.warn("Background content fetch/upload failed for candidate URL:", candidateUrl, ex);
     } finally {
       await removeCorsRule(ruleId);
+      endImportHost(importHost);
     }
   }
 
@@ -802,7 +838,7 @@ let queueRunning = false;
 
 // URLs already enqueued during the current hotkey burst. Cleared 3 s after
 // the queue goes idle so a deliberate re-upload later still works. Catches
-// the gelbooru "URL changed but DOM still old" race where two consecutive
+// the "URL changed but DOM still old" race on some boorus where two consecutive
 // hotkey presses end up scraping the same image.
 const burstPageUrls = new Set<string>();
 let burstClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -982,33 +1018,22 @@ async function messageHandler(cmd: BrowserCommand, sender: any): Promise<any> {
 browser.runtime.onMessage.addListener(messageHandler);
 
 // ── Native Referer injection for extension popup image loads ────────────────
-// When the popup's <img> tag tries to load a CDN-protected image (e.g.
-// img2.gelbooru.com), the browser sends the extension origin as Referer, which
-// gets blocked. We intercept those requests and replace the Referer with the
-// CDN's own parent domain so the hotlink check passes natively.
-// This also covers background-service-worker fetches (tabId === -1) to the same
-// CDN hosts so that tryAcquireContentToken's direct-fetch fallback sends a valid Referer.
+// When the popup's <img> tag tries to load a CDN-protected image, the browser
+// sends the extension origin as Referer, which hotlink protection blocks. We
+// replace it with the request host's own registrable domain so the hotlink
+// check passes natively. We only touch requests from the extension context
+// (tabId === -1) that are either image loads (popup previews) or part of an
+// active import fetch — so unrelated traffic (e.g. szurubooru API calls) is
+// never modified.
 if ((browser as any).webRequest?.onBeforeSendHeaders) {
-  const CDN_HOSTS: Record<string, string> = {
-    "img2.gelbooru.com":   "https://gelbooru.com/",
-    "img3.gelbooru.com":   "https://gelbooru.com/",
-    "wimg.rule34.xxx":     "https://rule34.xxx/",
-    "us.rule34.xxx":       "https://rule34.xxx/",
-  };
-
   try {
     (browser as any).webRequest.onBeforeSendHeaders.addListener(
       (details: any) => {
-        // Only modify requests from the extension popup/background page (tabId === -1).
-        // Content script requests run in web page tabs (tabId >= 0) and already carry
-        // the correct Referer via referrerPolicy:"unsafe-url" — don't touch those.
         if (details.tabId !== -1) return {};
         try {
-          const host = new URL(details.url).hostname;
-          const spoofedReferer = CDN_HOSTS[host]
-            ?? (host.endsWith(".rule34.xxx") ? "https://rule34.xxx/" : undefined)
-            ?? (host.endsWith(".gelbooru.com") ? "https://gelbooru.com/" : undefined);
-          if (!spoofedReferer) return {};
+          const base = registrableDomain(new URL(details.url).hostname);
+          if (details.type !== "image" && !activeImportHosts.has(base)) return {};
+          const spoofedReferer = `https://${base}/`;
           const headers: Array<{ name: string; value: string }> = details.requestHeaders ?? [];
           const idx = headers.findIndex((h: any) => h.name.toLowerCase() === "referer");
           if (idx >= 0) {
@@ -1031,60 +1056,49 @@ if ((browser as any).webRequest?.onBeforeSendHeaders) {
 
 // Inject CORS headers into CDN responses so content-script fetch() calls
 // (running in the page context) can read image bytes cross-origin.
-// This is a fallback for Firefox versions where declarativeNetRequest.updateSessionRules
-// is unavailable. Both mechanisms are harmless when active simultaneously.
-//
-// We use a hardcoded host→origin map so the correct Access-Control-Allow-Origin
-// is always injected regardless of whether details.originUrl is populated,
-// preventing a wrong Gelbooru default being applied to rule34.xxx requests.
-if ((browser as any).webRequest?.onHeadersReceived) {
-  const CDN_CORS_ORIGIN_MAP: Record<string, string> = {
-    "img2.gelbooru.com": "https://gelbooru.com",
-    "img3.gelbooru.com": "https://gelbooru.com",
-    "wimg.rule34.xxx":   "https://rule34.xxx",
-    "us.rule34.xxx":     "https://rule34.xxx",
-  };
-
-  try {
-    (browser as any).webRequest.onHeadersReceived.addListener(
-      (details: any) => {
-        const headers: Array<{ name: string; value: string }> = [...(details.responseHeaders ?? [])];
-        if (headers.some((h: any) => h.name.toLowerCase() === "access-control-allow-origin")) {
-          return {};
-        }
-        let host: string;
-        try {
-          host = new URL(details.url).hostname.toLowerCase();
-        } catch {
-          return {};
-        }
-        // Use hardcoded mapping first, then wildcard subdomain fallback.
-        let origin: string | undefined = CDN_CORS_ORIGIN_MAP[host];
-        if (!origin && host.endsWith(".rule34.xxx")) origin = "https://rule34.xxx";
-        if (!origin && host.endsWith(".gelbooru.com")) origin = "https://gelbooru.com";
-        // Fall back to originUrl for any other unlisted hosts.
-        if (!origin) {
+// This is a fallback ONLY for browsers without declarativeNetRequest session
+// rules (addCorsRule). On modern Chrome/Firefox addCorsRule handles this
+// per-import, so we don't register this listener at all — avoiding any
+// browser-wide webRequest cost. When we do register it, injection is limited to
+// hosts of an in-flight import (activeImportHosts), so it never acts as a
+// general CORS bypass on unrelated traffic.
+{
+  const dnr = (globalThis as any).chrome?.declarativeNetRequest ?? (browser as any).declarativeNetRequest;
+  const sessionRulesAvailable = !!dnr?.updateSessionRules;
+  if (!sessionRulesAvailable && (browser as any).webRequest?.onHeadersReceived) {
+    try {
+      (browser as any).webRequest.onHeadersReceived.addListener(
+        (details: any) => {
+          if (activeImportHosts.size === 0) return {};
+          let host: string;
+          try {
+            host = new URL(details.url).hostname.toLowerCase();
+          } catch {
+            return {};
+          }
+          const base = registrableDomain(host);
+          if (!activeImportHosts.has(base)) return {};
+          const headers: Array<{ name: string; value: string }> = [...(details.responseHeaders ?? [])];
+          if (headers.some((h: any) => h.name.toLowerCase() === "access-control-allow-origin")) {
+            return {};
+          }
+          // Echo the requesting page's origin when known, else fall back to the
+          // request host's own registrable domain.
+          let origin: string | undefined;
           try {
             if (details.originUrl) origin = new URL(details.originUrl).origin;
           } catch { /* ignore */ }
-        }
-        if (!origin) return {};
-        headers.push({ name: "Access-Control-Allow-Origin", value: origin });
-        headers.push({ name: "Access-Control-Allow-Credentials", value: "true" });
-        return { responseHeaders: headers };
-      },
-      {
-        urls: [
-          "*://img2.gelbooru.com/*",
-          "*://img3.gelbooru.com/*",
-          "*://*.rule34.xxx/*",
-        ],
-        types: ["xmlhttprequest"],
-      },
-      ["blocking", "responseHeaders"],
-    );
-  } catch (ex) {
-    console.warn("webRequest.onHeadersReceived CORS injection not available:", ex);
+          if (!origin) origin = `https://${base}`;
+          headers.push({ name: "Access-Control-Allow-Origin", value: origin });
+          headers.push({ name: "Access-Control-Allow-Credentials", value: "true" });
+          return { responseHeaders: headers };
+        },
+        { urls: ["<all_urls>"], types: ["xmlhttprequest"] },
+        ["blocking", "responseHeaders"],
+      );
+    } catch (ex) {
+      console.warn("webRequest.onHeadersReceived CORS injection not available:", ex);
+    }
   }
 }
 

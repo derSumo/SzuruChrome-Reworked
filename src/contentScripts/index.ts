@@ -23,7 +23,7 @@ import { t, setLanguage, Language } from "~/i18n";
   }
 
   // Fetch content from within the page context so cookies and session data are
-  // included automatically. This bypasses CDN hotlink protection (e.g. rule34.xxx)
+  // included automatically. This bypasses CDN hotlink protection
   // that blocks requests from non-browser / non-page contexts.
   // Returns base64-encoded data instead of ArrayBuffer because browser extension
   // message passing (especially Chrome MV3 / webextension-polyfill) may use JSON
@@ -107,7 +107,7 @@ import { t, setLanguage, Language } from "~/i18n";
     // Attempt 1: fetch with full-URL Referer (unsafe-url policy) but no credentials.
     // "unsafe-url" sends the complete page URL as Referer for cross-origin requests,
     // which satisfies CDN hotlink checks that verify the full path (not just origin).
-    // Reject HTML responses — CDNs like Gelbooru return 200 OK + HTML error page
+    // Reject HTML responses — some CDNs return 200 OK + HTML error page
     // when the Referer is wrong, which must not be mistaken for the actual media.
     let fetched: { buffer: ArrayBuffer; mimeType: string } | undefined;
     try {
@@ -116,7 +116,7 @@ import { t, setLanguage, Language } from "~/i18n";
     } catch { /* fall through */ }
 
     // Attempt 2: fetch with credentials + full-URL Referer.
-    // Some CDNs (e.g. rule34.xxx in Brave/Chrome) require session cookies AND
+    // Some CDNs (in Brave/Chrome) require session cookies AND
     // the correct Referer. Including credentials sends the page's cookies so the
     // CDN can verify the request originates from an authenticated session.
     if (!fetched) {
@@ -135,7 +135,7 @@ import { t, setLanguage, Language } from "~/i18n";
     } else {
       // Attempt 3: XHR with credentials (includes cookies + page Referer).
       // XHR bypasses CORS in Firefox content scripts with host_permissions,
-      // handling CDNs like rule34.xxx and Gelbooru that lack CORS headers.
+      // handling CDNs that lack CORS headers.
       const xhrResult = await xhrFetchBinary(url, importId);
       if (xhrResult.contentType.includes("text/html")) throw new Error("CDN returned an HTML error page");
       buffer = xhrResult.buffer;
@@ -516,7 +516,7 @@ import { t, setLanguage, Language } from "~/i18n";
       console.warn("Hotkey scrape failed:", ex);
     }
 
-    // Sanity-check: when a site like gelbooru navigates with arrow keys, the
+    // Sanity-check: when a booru navigates with arrow keys, the
     // URL can change a tick before the DOM swaps in the new image. If the
     // scraper sees an old DOM the post's pageUrl will not match the current
     // URL — reject this press so we don't upload the previous image as if
