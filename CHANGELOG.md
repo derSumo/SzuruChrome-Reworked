@@ -3,12 +3,12 @@
 ## [2.3.0] – May 2026
 
 ### Fixed
-- **Hotkey import in Brave/Chrome (MV3)** — Hotkey imports on CDN-protected sites (e.g. rule34.xxx) now work in Brave and Chrome. Root cause: Axios's fetch adapter in MV3 service workers silently failed on multipart FormData uploads to szurubooru (`/api/uploads`). All temp-file uploads now use native `fetch()` instead.
+- **Hotkey import in Brave/Chrome (MV3)** — Hotkey imports on CDN-protected booru sites now work in Brave and Chrome. Root cause: Axios's fetch adapter in MV3 service workers silently failed on multipart FormData uploads to szurubooru (`/api/uploads`). All temp-file uploads now use native `fetch()` instead.
 
 ### Added
 - **Multi-strategy CDN fetch in content script** — The content script now tries three approaches to bypass CDN hotlink protection: plain `fetch()` with full Referer (`unsafe-url`), `fetch()` with cookies + Referer, and finally XHR with credentials (Firefox CORS bypass via `host_permissions`).
 - **`declarativeNetRequest` CORS injection (Chrome/Brave)** — Session rules are dynamically injected via `declarativeNetRequest.updateSessionRules` to add CORS headers to CDN responses, allowing the content script to read image bytes cross-origin.
-- **`webRequest` Referer & CORS injection (Firefox)** — `onBeforeSendHeaders` replaces the Referer with the CDN's own origin for extension-context requests; `onHeadersReceived` injects `Access-Control-Allow-Origin` for rule34.xxx and Gelbooru CDNs.
+- **`webRequest` Referer & CORS injection (Firefox)** — `onBeforeSendHeaders` replaces the Referer with the CDN's own origin for extension-context requests; `onHeadersReceived` injects `Access-Control-Allow-Origin` for CDN-protected booru hosts.
 - **Toast restoration after page navigation** — Import status toasts are now restored when navigating to a new page during an active import. The background tracks in-flight/recently finished imports for 15 seconds; new content script instances query and recreate the correct toast state.
 
 ---
@@ -70,7 +70,7 @@
 - Modernized options page with sidebar navigation.
 
 ### Fixed
-- 403 errors on rule34.xxx (CDN hotlink protection bypass).
+- 403 errors on CDN-protected booru sites (hotlink protection bypass).
 - Octet-stream upload errors (ArrayBuffer base64 encoding in MV3 service workers).
 - Popup preview images for hotlink-protected content.
 - Improved MIME type detection from file extension.

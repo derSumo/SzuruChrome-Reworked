@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "SzuruChrome Reworked",
+    "description": "Product name shown on the toolbar button, in chrome://extensions, and on the Chrome Web Store listing. Brand name — do not translate."
+  },
+  "extDescription": {
+    "message": "Import images, videos and tags from booru-style image boards into your self-hosted szurubooru instance.",
+    "description": "Short tagline shown under the name in chrome://extensions and as the meta description on the Chrome Web Store listing. Hard limit: 132 characters."
+  }
+}

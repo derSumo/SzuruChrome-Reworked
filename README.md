@@ -17,7 +17,7 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 | **Real Upload Progress** | Progress bar shows actual upload progress (via axios `onUploadProgress`) instead of a fake animation. |
 | **Glass Notify Toasts** | Status notifications use modern glassmorphism with backdrop blur, translucent backgrounds, and spring animations. |
 | **Modernized Options Page** | Redesigned settings with sidebar navigation, card layout, dark/light theme, and a built-in changelog. |
-| **403 Fix (rule34.xxx etc.)** | Content uploads now include credentials and Referer headers to bypass CDN hotlink protection. |
+| **403 Fix (CDN hotlink protection)** | Content uploads now include credentials and Referer headers to bypass CDN hotlink protection. |
 | **Octet-Stream Fix** | Binary data is base64-encoded during message passing to prevent ArrayBuffer destruction in MV3 service workers. |
 | **Preview Image Fix** | Popup preview images auto-fallback to blob URLs when direct loading fails due to hotlink protection. |
 | **MIME Type Detection** | Files with missing/incorrect MIME types (`application/octet-stream`) are auto-detected from the file extension. |
@@ -98,7 +98,7 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 | **Echter Upload-Fortschritt** | Die Fortschrittsanzeige zeigt den tatsächlichen Upload-Fortschritt (via axios `onUploadProgress`) statt einer Fake-Animation. |
 | **Glass-Benachrichtigungs-Toasts** | Status-Benachrichtigungen im modernen Glasmorphismus-Design mit Backdrop-Blur, halbtransparenten Hintergründen und Spring-Animationen. |
 | **Modernisierte Einstellungsseite** | Neu gestaltete Settings mit Sidebar-Navigation, Card-Layout, Dark/Light-Theme und integriertem Changelog. |
-| **403-Fix (rule34.xxx etc.)** | Content-Uploads enthalten jetzt Credentials und Referer-Header um den CDN-Hotlink-Schutz zu umgehen. |
+| **403-Fix (CDN-Hotlink-Schutz)** | Content-Uploads enthalten jetzt Credentials und Referer-Header um den CDN-Hotlink-Schutz zu umgehen. |
 | **Octet-Stream-Fix** | Binärdaten werden bei der Nachrichtenübermittlung base64-kodiert, um die Zerstörung von ArrayBuffern in MV3 Service Workern zu verhindern. |
 | **Vorschaubild-Fix** | Vorschaubilder im Popup fallen automatisch auf Blob-URLs zurück, wenn das direkte Laden durch Hotlink-Schutz fehlschlägt. |
 | **MIME-Type-Erkennung** | Dateien mit fehlenden/falschen MIME-Typen (`application/octet-stream`) werden automatisch anhand der Dateiendung erkannt. |

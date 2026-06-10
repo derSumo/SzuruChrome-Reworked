@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "SzuruChrome Reworked",
+    "description": "Produktname, der am Toolbar-Button, unter chrome://extensions und im Chrome-Web-Store-Eintrag erscheint. Markenname — nicht übersetzen."
+  },
+  "extDescription": {
+    "message": "Importiert Bilder, Videos und Tags von Booru-Bildbrettern in deine selbstgehostete szurubooru-Instanz.",
+    "description": "Kurzer Untertitel unter dem Namen in chrome://extensions und als Meta-Beschreibung im Chrome-Web-Store-Eintrag. Harte Grenze: 132 Zeichen."
+  }
+}
