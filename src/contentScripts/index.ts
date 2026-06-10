@@ -1,5 +1,5 @@
 import { NeoScraper, ScrapeResults } from "neo-scraper";
-import { BrowserCommand, HotkeyImportCommandData } from "~/models";
+import { BrowserCommand } from "~/models";
 import { guessMimeTypeFromUrl } from "~/utils";
 import { t, setLanguage, Language } from "~/i18n";
 
@@ -35,12 +35,25 @@ import { t, setLanguage, Language } from "~/i18n";
   // XHR in Firefox content scripts with host_permissions bypasses CORS entirely.
   // fetch() in content scripts still enforces CORS and cannot read cross-origin
   // responses without server-side CORS headers — XHR does not have this restriction.
-  function xhrFetchBinary(url: string): Promise<{ buffer: ArrayBuffer; contentType: string }> {
+  function sendDownloadProgress(importId: string, progress: number) {
+    browser.runtime.sendMessage(new BrowserCommand("report_progress", { importId, progress })).catch(() => {});
+  }
+
+  function xhrFetchBinary(url: string, importId?: string): Promise<{ buffer: ArrayBuffer; contentType: string }> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("GET", url, true);
       xhr.responseType = "arraybuffer";
       xhr.withCredentials = true;
+      if (importId) {
+        let lastReported = -1;
+        xhr.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = (e.loaded / e.total) * 0.8;
+            if (pct - lastReported >= 0.02) { lastReported = pct; sendDownloadProgress(importId, pct); }
+          }
+        };
+      }
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve({
@@ -57,40 +70,73 @@ import { t, setLanguage, Language } from "~/i18n";
     });
   }
 
-  async function fetchContent(url: string): Promise<{ base64: string; mimeType: string }> {
+  // Stream a fetch Response body and report download progress (mapped to 0–0.8 range).
+  // Falls back to arrayBuffer() when Content-Length is unavailable.
+  async function streamResponse(res: Response, importId?: string): Promise<{ buffer: ArrayBuffer; mimeType: string }> {
+    const rawMime = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "application/octet-stream";
+    const contentLength = parseInt(res.headers.get("content-length") ?? "0");
+
+    if (!importId || !res.body || contentLength <= 0) {
+      return { buffer: await res.arrayBuffer(), mimeType: rawMime };
+    }
+
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    let lastReported = -1;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        received += value.length;
+        const pct = Math.min(received / contentLength, 1) * 0.8;
+        if (pct - lastReported >= 0.02) { lastReported = pct; sendDownloadProgress(importId, pct); }
+      }
+    }
+
+    const buffer = new ArrayBuffer(received);
+    const view = new Uint8Array(buffer);
+    let offset = 0;
+    for (const chunk of chunks) { view.set(chunk, offset); offset += chunk.length; }
+    return { buffer, mimeType: rawMime };
+  }
+
+  async function fetchContent(url: string, importId?: string): Promise<{ base64: string; mimeType: string }> {
     // Attempt 1: fetch with full-URL Referer (unsafe-url policy) but no credentials.
     // "unsafe-url" sends the complete page URL as Referer for cross-origin requests,
     // which satisfies CDN hotlink checks that verify the full path (not just origin).
     // Reject HTML responses — CDNs like Gelbooru return 200 OK + HTML error page
     // when the Referer is wrong, which must not be mistaken for the actual media.
-    let res: Response | undefined;
+    let fetched: { buffer: ArrayBuffer; mimeType: string } | undefined;
     try {
-      res = await fetch(url, { referrerPolicy: "unsafe-url" });
-      if (!res.ok || isHtmlResponse(res)) res = undefined;
-    } catch { res = undefined; }
+      const res = await fetch(url, { referrerPolicy: "unsafe-url" });
+      if (res.ok && !isHtmlResponse(res)) fetched = await streamResponse(res, importId);
+    } catch { /* fall through */ }
 
     // Attempt 2: fetch with credentials + full-URL Referer.
     // Some CDNs (e.g. rule34.xxx in Brave/Chrome) require session cookies AND
     // the correct Referer. Including credentials sends the page's cookies so the
     // CDN can verify the request originates from an authenticated session.
-    if (!res) {
+    if (!fetched) {
       try {
-        res = await fetch(url, { credentials: "include", referrerPolicy: "unsafe-url" });
-        if (!res.ok || isHtmlResponse(res)) res = undefined;
-      } catch { res = undefined; }
+        const res = await fetch(url, { credentials: "include", referrerPolicy: "unsafe-url" });
+        if (res.ok && !isHtmlResponse(res)) fetched = await streamResponse(res, importId);
+      } catch { /* fall through */ }
     }
 
     let buffer: ArrayBuffer;
     let rawMime: string;
 
-    if (res) {
-      buffer = await res.arrayBuffer();
-      rawMime = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "application/octet-stream";
+    if (fetched) {
+      buffer = fetched.buffer;
+      rawMime = fetched.mimeType;
     } else {
       // Attempt 3: XHR with credentials (includes cookies + page Referer).
       // XHR bypasses CORS in Firefox content scripts with host_permissions,
       // handling CDNs like rule34.xxx and Gelbooru that lack CORS headers.
-      const xhrResult = await xhrFetchBinary(url);
+      const xhrResult = await xhrFetchBinary(url, importId);
       if (xhrResult.contentType.includes("text/html")) throw new Error("CDN returned an HTML error page");
       buffer = xhrResult.buffer;
       rawMime = xhrResult.contentType;
@@ -123,6 +169,11 @@ import { t, setLanguage, Language } from "~/i18n";
 
   const toastMap = new Map<string, ToastItem>();
 
+  // Tracks importIds that have already finished in this page session so we
+  // don't re-create their toasts during bfcache restores or after a tab
+  // navigation lands on the same content script.
+  const seenFinished = new Set<string>();
+
   function getOrCreateContainer(): HTMLElement {
     let c = document.getElementById(TC_ID);
     if (c) return c;
@@ -150,20 +201,26 @@ import { t, setLanguage, Language } from "~/i18n";
       #${TC_ID} .st.show{opacity:1;transform:translateX(0) scale(1)}
       #${TC_ID} .st.success{border-color:rgba(52,199,89,.22)}
       #${TC_ID} .st.error{border-color:rgba(255,69,58,.22)}
+      #${TC_ID} .st.compact{
+        padding:6px 11px;
+        transition:padding .25s cubic-bezier(.16,1,.3,1),opacity .28s cubic-bezier(.16,1,.3,1),transform .28s cubic-bezier(.16,1,.3,1);
+      }
+      #${TC_ID} .st.compact .st-text{
+        font-size:12px;font-weight:600;letter-spacing:-0.01em;opacity:.92;
+      }
+      #${TC_ID} .st.compact .st-icon{width:13px;height:13px}
       #${TC_ID} .st-prog{
         position:absolute;inset:0;transform-origin:left;transform:scaleX(0);z-index:0;
         transition:transform .38s cubic-bezier(.4,0,.2,1);
-        background:linear-gradient(90deg,rgba(99,102,241,.22),rgba(168,85,247,.14));
+        background:linear-gradient(90deg,rgba(99,102,241,.3),rgba(168,85,247,.2));
       }
       #${TC_ID} .st-prog.shimmer{
-        transform:scaleX(1);
-        background:linear-gradient(90deg,transparent 0%,rgba(99,102,241,.2) 40%,rgba(168,85,247,.14) 60%,transparent 100%);
-        background-size:250% 100%;
-        animation:szuru-shim 1.9s ease-in-out infinite;
+        transition:none;
+        animation:szuru-shim 20s cubic-bezier(0.1,0.9,0.2,1) 1 forwards;
       }
       #${TC_ID} .st.success .st-prog{background:linear-gradient(90deg,rgba(52,199,89,.18),rgba(52,199,89,.08))}
       #${TC_ID} .st.error .st-prog{background:rgba(255,69,58,.14)}
-      @keyframes szuru-shim{0%{background-position:250% 0}100%{background-position:-250% 0}}
+      @keyframes szuru-shim{0%{transform:scaleX(0)}100%{transform:scaleX(0.88)}}
       #${TC_ID} .st-body{position:relative;z-index:1;display:flex;align-items:center;gap:8px}
       #${TC_ID} .st-icon{flex-shrink:0;width:15px;height:15px;display:flex;align-items:center;justify-content:center}
       #${TC_ID} .st-spin{
@@ -181,6 +238,12 @@ import { t, setLanguage, Language } from "~/i18n";
   }
 
   function createToast(importId: string): ToastItem {
+    // Guard against duplicate toasts for the same import. This happens when
+    // the page is restored from bfcache or when the background restore runs
+    // alongside a fresh "running" status broadcast.
+    const existing = toastMap.get(importId);
+    if (existing) return existing;
+
     const container = getOrCreateContainer();
 
     const el = document.createElement("div");
@@ -230,8 +293,19 @@ import { t, setLanguage, Language } from "~/i18n";
   function handleQuickImportStatus(data: any) {
     const importId: string = data.importId ?? "__legacy__";
 
+    // Suppress already-finished imports from being recreated as fresh toasts.
+    if (seenFinished.has(importId) && data.status !== "success" && data.status !== "error") {
+      return;
+    }
+
     if (data.status === "running") {
-      createToast(importId);
+      const item = createToast(importId);
+      // "queued" mode = waiting in the sequential queue behind another upload.
+      if (data.queued) {
+        item.textEl.textContent = t("toast.queued") || "Queued…";
+      } else {
+        item.textEl.textContent = t("toast.importing") || "Importing…";
+      }
       return;
     }
 
@@ -241,28 +315,43 @@ import { t, setLanguage, Language } from "~/i18n";
     const item = toastMap.get(importId)!;
 
     if (data.status === "progress") {
-      if (typeof data.progress === "number" && item.phase === "loading") {
+      // Keep shimmer running during indeterminate load; only switch to a real
+      // bar when meaningful intermediate progress is available (< 1 means partial).
+      if (typeof data.progress === "number" && data.progress < 1 && item.phase === "loading") {
         item.progressEl.classList.remove("shimmer");
         item.progressEl.style.transform = `scaleX(${Math.min(Math.max(data.progress, 0), 0.98)})`;
       }
       return;
     }
 
-    // Terminal states
+    // Terminal states — freeze animation at current position, then transition to full.
+    // rAF ensures the browser records the animated value before we override the transform.
     item.phase = "done";
-    item.progressEl.classList.remove("shimmer");
-    item.progressEl.style.transition = "transform .22s ease-out";
-    item.progressEl.style.transform = "scaleX(1)";
+    const progEl = item.progressEl;
+    const currentScale = getComputedStyle(progEl).transform;
+    progEl.classList.remove("shimmer");
+    progEl.style.transform = currentScale; // freeze at current position
+    requestAnimationFrame(() => {
+      progEl.style.transition = "transform .3s ease-out";
+      progEl.style.transform = "scaleX(1)";
+    });
 
     if (data.status === "success") {
+      seenFinished.add(importId);
       item.el.classList.add("success");
       item.iconEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2.5 6.5l3 3 5-5" stroke="rgba(52,199,89,.95)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-      const link = data.postUrl ? `<a href="${data.postUrl}" target="_blank">Post #${data.postId}</a>` : "Post";
+      // Compact "done" rendering: just the icon and a short post link – keeps
+      // the toast stack tidy when many imports finish in quick succession.
+      const link = data.postUrl
+        ? `<a href="${data.postUrl}" target="_blank">#${data.postId}</a>`
+        : "Post";
       item.textEl.innerHTML = data.alreadyUploaded
-        ? t("toast.alreadyUploaded", { link })
-        : t("toast.imported", { link });
-      dismissToast(importId, 3800);
+        ? t("toast.alreadyUploadedShort", { link }) || `${link} (existing)`
+        : t("toast.importedShort", { link }) || link;
+      item.el.classList.add("compact");
+      dismissToast(importId, 2400);
     } else if (data.status === "error") {
+      seenFinished.add(importId);
       item.el.classList.add("error");
       item.iconEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M3 3l7 7M10 3l-7 7" stroke="rgba(255,69,58,.9)" stroke-width="1.7" stroke-linecap="round"/></svg>`;
       item.textEl.textContent = t("toast.importFailed", { message: data.message ?? "Unknown error" });
@@ -294,7 +383,7 @@ import { t, setLanguage, Language } from "~/i18n";
       case "grab_post":
         return grabPost();
       case "fetch_content":
-        return fetchContent(cmd.data.url);
+        return fetchContent(cmd.data.url, cmd.data.importId);
       case "fetch_head_info":
         return fetchHeadInfo(cmd.data.url);
       case "quick_import_status":
@@ -309,7 +398,7 @@ import { t, setLanguage, Language } from "~/i18n";
   // The background tracks all in-flight/recently-finished imports.
   // On each new page load we ask for the current state and recreate toasts,
   // so the user always sees what's happening even after navigating away.
-  void (async () => {
+  async function restoreActiveImports() {
     try {
       const imports: Array<{
         importId: string;
@@ -319,23 +408,39 @@ import { t, setLanguage, Language } from "~/i18n";
         postUrl?: string;
         alreadyUploaded?: boolean;
         message?: string;
+        queued?: boolean;
       }> = await browser.runtime.sendMessage(new BrowserCommand("get_active_imports"));
       if (!Array.isArray(imports)) return;
       for (const item of imports) {
         if (!item.importId) continue;
-        // Always create the toast first (shows as loading with shimmer)
-        createToast(item.importId);
-        if (item.status === "progress" && typeof item.progress === "number") {
-          handleQuickImportStatus({ status: "progress", importId: item.importId, progress: item.progress });
+        // Skip imports already shown as finished in this page session.
+        // Avoids "row of completed toasts" when bouncing through pages.
+        if (seenFinished.has(item.importId)) continue;
+        // Dedupe: createToast already returns the existing item when present.
+        if (item.status === "running") {
+          handleQuickImportStatus({ status: "running", importId: item.importId, queued: item.queued });
+        } else if (item.status === "progress") {
+          createToast(item.importId);
+          if (typeof item.progress === "number") {
+            handleQuickImportStatus({ status: "progress", importId: item.importId, progress: item.progress });
+          }
         } else if (item.status === "success") {
+          createToast(item.importId);
           handleQuickImportStatus({ status: "success", importId: item.importId, postId: item.postId, postUrl: item.postUrl, alreadyUploaded: item.alreadyUploaded });
         } else if (item.status === "error") {
+          createToast(item.importId);
           handleQuickImportStatus({ status: "error", importId: item.importId, message: item.message });
         }
-        // "running" → toast stays in shimmer/loading state, which is correct
       }
     } catch { /* ignore — content script may load before background is ready */ }
-  })();
+  }
+  void restoreActiveImports();
+
+  // bfcache restore (Chrome/Firefox): page comes back from history without a
+  // fresh content-script load. Refresh toast state so nothing lingers stale.
+  window.addEventListener("pageshow", (e) => {
+    if ((e as PageTransitionEvent).persisted) void restoreActiveImports();
+  });
 
   // ── Hotkey quick-import ─────────────────────────────────
   type HotkeyConfig = { enabled: boolean; key: string; modifiers: string[] };
@@ -400,8 +505,41 @@ import { t, setLanguage, Language } from "~/i18n";
     // Create the toast immediately so the user gets instant feedback
     handleQuickImportStatus({ status: "running", importId });
 
+    // Capture page scrape at hotkey-press time so subsequent navigation
+    // doesn't make the queued upload scrape the wrong page (which would
+    // cause "already uploaded" collisions blocking the rest of the queue).
+    const currentUrl = window.location.href;
+    let scrapeResults: ScrapeResults | undefined;
+    try {
+      scrapeResults = grabPost();
+    } catch (ex) {
+      console.warn("Hotkey scrape failed:", ex);
+    }
+
+    // Sanity-check: when a site like gelbooru navigates with arrow keys, the
+    // URL can change a tick before the DOM swaps in the new image. If the
+    // scraper sees an old DOM the post's pageUrl will not match the current
+    // URL — reject this press so we don't upload the previous image as if
+    // it were the current one.
+    const firstScrapedPost = scrapeResults?.results?.find((r: any) => r?.posts?.length)?.posts?.[0];
+    const scrapedPageUrl: string | undefined = firstScrapedPost?.pageUrl;
+    if (scrapedPageUrl && currentUrl && scrapedPageUrl !== currentUrl) {
+      console.warn("Hotkey rejected — scrape pageUrl mismatch:", { scrapedPageUrl, currentUrl });
+      handleQuickImportStatus({
+        status: "error",
+        importId,
+        message: t("toast.staleScrape") || "Page still transitioning – try again",
+      });
+      return;
+    }
+
     browser.runtime.sendMessage(
-      new BrowserCommand(hotkeyCommand, new HotkeyImportCommandData(window.location.href, hotkeyCommand === "hotkey_import_link_last", importId)),
+      new BrowserCommand(hotkeyCommand, {
+        url: currentUrl,
+        linkWithLastPost: hotkeyCommand === "hotkey_import_link_last",
+        importId,
+        scrapeResults,
+      }),
     ).catch((ex: any) => {
       handleQuickImportStatus({ status: "error", message: ex?.message ?? String(ex), importId });
     });

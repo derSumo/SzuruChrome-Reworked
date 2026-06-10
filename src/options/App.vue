@@ -177,6 +177,42 @@ function clearHotkeyLinkLast() {
   cfg.value.hotkeyLinkLast.key = "";
   cfg.value.hotkeyLinkLast.modifiers = [];
 }
+
+// ── Per-site "upload as content" whitelist ───────────────────
+const newUploadAsContentSite = ref("");
+
+function normalizeHostInput(value: string): string {
+  if (!value) return "";
+  let s = value.trim();
+  try {
+    const url = new URL(s.includes("://") ? s : "https://" + s);
+    return url.host.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return s.toLowerCase().replace(/^www\./, "");
+  }
+}
+
+function addUploadAsContentSite(raw: string) {
+  const host = normalizeHostInput(raw);
+  if (!host) return;
+  if (!cfg.value.uploadAsContentSites) cfg.value.uploadAsContentSites = [];
+  if (!cfg.value.uploadAsContentSites.includes(host)) {
+    cfg.value.uploadAsContentSites.push(host);
+  }
+}
+
+function removeUploadAsContentSite(host: string) {
+  if (!cfg.value.uploadAsContentSites) return;
+  const idx = cfg.value.uploadAsContentSites.indexOf(host);
+  if (idx >= 0) cfg.value.uploadAsContentSites.splice(idx, 1);
+}
+
+function addNewSiteFromInput() {
+  if (!newUploadAsContentSite.value.trim()) return;
+  addUploadAsContentSite(newUploadAsContentSite.value);
+  newUploadAsContentSite.value = "";
+}
+
 </script>
 
 <template>
@@ -260,6 +296,31 @@ function clearHotkeyLinkLast() {
               <input type="checkbox" v-model="cfg.addTagImplications" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
             </label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.general.uploadAsContentSites") }}</h3>
+          <p class="card-hint">{{ t("options.general.uploadAsContentSitesHint") }}</p>
+
+          <div class="uac-active">
+            <template v-if="(cfg.uploadAsContentSites ?? []).length === 0">
+              <div class="uac-empty">{{ t("options.general.uploadAsContentSitesEmpty") }}</div>
+            </template>
+            <span v-for="host in cfg.uploadAsContentSites" :key="host" class="uac-chip">
+              <span class="uac-host">{{ host }}</span>
+              <button class="uac-remove" @click="removeUploadAsContentSite(host)" title="Remove">✕</button>
+            </span>
+          </div>
+
+          <div class="uac-add-row">
+            <input
+              type="text"
+              :placeholder="t('options.general.uploadAsContentAddPlaceholder')"
+              v-model="newUploadAsContentSite"
+              @keydown.enter.prevent="addNewSiteFromInput"
+            />
+            <button class="btn btn-secondary" @click="addNewSiteFromInput">{{ t("options.general.uploadAsContentAdd") }}</button>
           </div>
         </div>
 
@@ -565,6 +626,18 @@ function clearHotkeyLinkLast() {
         <h2 class="tab-title">{{ t("changelog.title") }}</h2>
 
         <div class="card changelog-card">
+          <div class="changelog-entry">
+            <div class="changelog-version">v2.4.0</div>
+            <div class="changelog-date">{{ t("changelog.v240.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v240.queue") }}</strong> — {{ t("changelog.v240.queueDesc") }}</li>
+              <li><strong>{{ t("changelog.v240.linkChain") }}</strong> — {{ t("changelog.v240.linkChainDesc") }}</li>
+              <li><strong>{{ t("changelog.v240.uploadAsContentSites") }}</strong> — {{ t("changelog.v240.uploadAsContentSitesDesc") }}</li>
+              <li><strong>{{ t("changelog.v240.compactToast") }}</strong> — {{ t("changelog.v240.compactToastDesc") }}</li>
+              <li><strong>{{ t("changelog.v240.dedupToast") }}</strong> — {{ t("changelog.v240.dedupToastDesc") }}</li>
+            </ul>
+          </div>
+
           <div class="changelog-entry">
             <div class="changelog-version">v2.3.0</div>
             <div class="changelog-date">{{ t("changelog.v230.date") }}</div>
@@ -1408,6 +1481,118 @@ html:not(.dark) .page select option {
     border-color: var(--lq-danger);
     color: var(--lq-danger);
   }
+}
+
+/* ── Upload-as-Content sites ──────────────────────────── */
+.uac-active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px;
+  border: 1.5px dashed var(--lq-input-border);
+  border-radius: var(--lq-radius-sm);
+  background: var(--lq-input-bg);
+  min-height: 56px;
+  transition: border-color var(--lq-transition), background var(--lq-transition);
+
+  &.drag-hover {
+    border-color: var(--lq-accent);
+    background: var(--lq-accent-soft);
+  }
+}
+
+.uac-empty {
+  font-size: 12px;
+  color: var(--lq-text-tertiary);
+  font-style: italic;
+  align-self: center;
+  padding: 4px 2px;
+}
+
+.uac-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  background: var(--lq-surface);
+  border: 1px solid var(--lq-surface-border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--lq-mono);
+  font-weight: 600;
+  color: var(--lq-text);
+  transition: all var(--lq-transition);
+}
+
+.uac-chip-drag {
+  cursor: grab;
+  user-select: none;
+  background: var(--lq-input-bg);
+
+  &:hover {
+    border-color: var(--lq-accent);
+    background: var(--lq-accent-soft);
+    transform: translateY(-1px);
+  }
+
+  &:active { cursor: grabbing; }
+}
+
+.uac-host { letter-spacing: -0.02em; }
+
+.uac-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: linear-gradient(135deg, var(--lq-accent), #8b5cf6);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.uac-remove {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--lq-text-tertiary);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--lq-transition);
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--lq-danger);
+  }
+}
+
+.uac-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+
+  input[type="text"] { flex: 1; }
+}
+
+.uac-suggested-label {
+  margin-top: 18px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--lq-text-tertiary);
+}
+
+.uac-suggested {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* ── Changelog ─────────────────────────────────────────── */

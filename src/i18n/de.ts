@@ -17,7 +17,7 @@ export default {
   "options.general.autoImportTags": "Alle Tags automatisch importieren",
   "options.general.autoImportTagsHint": "Importiert automatisch alle Tags inklusive Kategorien auf unterstützten Seiten (Danbooru, Zerochan, etc.).",
   "options.general.uploadAsContent": "Immer als Inhalt hochladen",
-  "options.general.uploadAsContentHint": "Lädt die Datei herunter und lädt sie direkt hoch, anstatt die URL an szurubooru zu übergeben. Empfohlen aktiviert zu lassen — erforderlich für Seiten mit Hotlink-Schutz (z.B. rule34.xxx) und damit die Ähnlichkeitsprüfung zuverlässig funktioniert.",
+  "options.general.uploadAsContentHint": "Lädt die Datei herunter und lädt sie direkt hoch, anstatt die URL an szurubooru zu übergeben. Empfohlen aktiviert zu lassen — erforderlich für Seiten mit Hotlink-Schutz und damit die Ähnlichkeitsprüfung zuverlässig funktioniert.",
   "options.general.uploadAsContentWarning": "⚠ Empfohlen: Das Deaktivieren kann dazu führen, dass Ähnlichkeitsprüfungen fehlschlagen — Auto-Relationen funktionieren dann nicht. Der Upload selbst ist nicht betroffen.",
   "options.general.addImplications": "Tag-Implikationen hinzufügen",
   "options.general.addImplicationsHint": "Fügt automatisch implizierte Tags hinzu, wenn ein Tag hinzugefügt wird.",
@@ -37,6 +37,13 @@ export default {
   "options.general.hotkeyLinkLastEnable": "Import+Verknüpfen-Tastenkürzel aktivieren",
   "options.general.hotkeyLinkLastEnableHint": "Lädt die aktuelle Seite hoch und verknüpft den neuen Post automatisch mit dem zuvor hochgeladenen Post als Relation.",
   "options.general.hotkeyLinkLastShortcutHint": "Wähle eine eigene Tastenkombination für Import + Relation mit dem letzten Post.",
+
+  // Per-Site Upload-als-Inhalt
+  "options.general.uploadAsContentSites": "Als Inhalt hochladen (pro Seite)",
+  "options.general.uploadAsContentSitesHint": "Eine Whitelist von Hosts, die unabhängig vom globalen Schalter immer als Inhalt hochladen. Trage hier ein, welche Seiten du brauchst — nützlich für Hosts mit CDN-Hotlink-Schutz. Host eintippen und auf Hinzufügen klicken, oder mit ✕ entfernen.",
+  "options.general.uploadAsContentSitesEmpty": "Keine Seiten konfiguriert — Host unten eintippen und auf Hinzufügen klicken.",
+  "options.general.uploadAsContentAdd": "Hinzufügen",
+  "options.general.uploadAsContentAddPlaceholder": "z.B. example.com oder https://example.com",
 
   // Oberfläche
   "options.interface.title": "Oberfläche",
@@ -156,9 +163,13 @@ export default {
 
   // ── Toast (Content-Script) ────────────────────────────
   "toast.importing": "Wird importiert…",
+  "toast.queued": "In Warteschlange…",
   "toast.imported": "✔ {link} erfolgreich importiert",
+  "toast.importedShort": "{link} importiert",
   "toast.alreadyUploaded": "ℹ Bereits hochgeladen als {link}",
+  "toast.alreadyUploadedShort": "{link} (vorhanden)",
   "toast.importFailed": "✘ Import fehlgeschlagen: {message}",
+  "toast.staleScrape": "Seite lädt noch — Hotkey erneut drücken",
 
   // ── Background ────────────────────────────────────────
   "bg.noInstances": "Keine Instanzen konfiguriert. Bitte füge zuerst eine Szuru-Instanz in den Erweiterungseinstellungen hinzu.",
@@ -168,19 +179,32 @@ export default {
   "bg.noActiveTab": "Kein aktiver Tab für Hotkey-Import gefunden.",
   "bg.importFailed": "Hintergrund-Import fehlgeschlagen.",
   "bg.contextMenu": "In ausgewählte Szuru-Instanz importieren",
+  "bg.duplicateInBurst": "Duplikat — gleiche Seite wurde in dieser Folge bereits in die Warteschlange gestellt",
 
   // ── Changelog ─────────────────────────────────────────
   "changelog.title": "Changelog",
 
+  "changelog.v240.date": "Mai 2026",
+  "changelog.v240.queue": "Sequenzielle Import-Warteschlange",
+  "changelog.v240.queueDesc": "Hotkey-, Kontextmenü- und Link-Chain-Importe werden jetzt strikt nacheinander abgearbeitet statt parallel. Auch große Stapel bleiben in Reihenfolge und kommen nicht durcheinander.",
+  "changelog.v240.linkChain": "Persistente Link-Kette bei Hotkey + Letzten verknüpfen",
+  "changelog.v240.linkChainDesc": "Wenn der Link-Last-Hotkey mehrfach hintereinander genutzt wird, wird jeder neue Post mit allen vorherigen in der Kette verknüpft. Ein normaler Quick-Import setzt die Kette zurück.",
+  "changelog.v240.uploadAsContentSites": "„Als Inhalt hochladen\" pro Seite",
+  "changelog.v240.uploadAsContentSitesDesc": "Eine Whitelist pro Seite unter Allgemein erzwingt, dass bestimmte Hosts immer als Inhalt hochladen. Trage die Hosts ein, die du brauchst.",
+  "changelog.v240.compactToast": "Kompakter „Fertig\"-Toast",
+  "changelog.v240.compactToastDesc": "Abgeschlossene Importe schrumpfen auf einen kleinen Chip mit Icon und Post-Link, sodass mehrere fertige Toasts nicht mehr halben Bildschirm einnehmen.",
+  "changelog.v240.dedupToast": "Toast-Entdopplung bei Seitenwechsel",
+  "changelog.v240.dedupToastDesc": "Vor- und Zurück-Navigation erzeugt keine doppelten Toasts mehr. Bereits abgeschlossene Importe in der aktuellen Sitzung werden übersprungen.",
+
   "changelog.v230.date": "Mai 2026",
   "changelog.v230.hotfixFormData": "Hotkey-Import in Brave/Chrome behoben (MV3)",
-  "changelog.v230.hotfixFormDataDesc": "Hotkey-Importe auf CDN-geschützten Seiten (z.B. rule34.xxx) funktionieren jetzt in Brave und Chrome. Ursache: Der Axios-Fetch-Adapter in MV3 Service Workern schlug bei Multipart-FormData-Uploads lautlos fehl. Alle Temp-File-Uploads verwenden jetzt natives fetch().",
+  "changelog.v230.hotfixFormDataDesc": "Hotkey-Importe auf CDN-geschützten Booru-Seiten funktionieren jetzt in Brave und Chrome. Ursache: Der Axios-Fetch-Adapter in MV3 Service Workern schlug bei Multipart-FormData-Uploads lautlos fehl. Alle Temp-File-Uploads verwenden jetzt natives fetch().",
   "changelog.v230.multiStrategyFetch": "Mehrstufiger CDN-Fetch im Content Script",
   "changelog.v230.multiStrategyFetchDesc": "Das Content Script versucht jetzt drei Methoden, um CDN-Hotlink-Schutz zu umgehen: einfaches Fetch mit vollem Referer, Fetch mit Cookies + Referer, und zuletzt XHR mit Credentials (Firefox CORS-Bypass via host_permissions).",
   "changelog.v230.declarativeNetRequest": "declarativeNetRequest CORS-Injektion (Chrome/Brave)",
   "changelog.v230.declarativeNetRequestDesc": "Session-Regeln werden dynamisch via declarativeNetRequest.updateSessionRules injiziert, um CORS-Header zu CDN-Antworten hinzuzufügen, damit das Content Script Bilddaten Cross-Origin in Chrome/Brave lesen kann.",
   "changelog.v230.webRequestReferer": "webRequest Referer- & CORS-Injektion (Firefox)",
-  "changelog.v230.webRequestRefererDesc": "onBeforeSendHeaders ersetzt jetzt den Referer durch den eigenen CDN-Origin bei Anfragen aus dem Extension-Kontext, und onHeadersReceived injiziert CORS-Header für rule34.xxx- und Gelbooru-CDNs.",
+  "changelog.v230.webRequestRefererDesc": "onBeforeSendHeaders ersetzt jetzt den Referer durch den eigenen CDN-Origin bei Anfragen aus dem Extension-Kontext, und onHeadersReceived injiziert CORS-Header für CDN-geschützte Booru-Hosts.",
   "changelog.v230.toastRestore": "Toast-Wiederherstellung nach Seitennavigation",
   "changelog.v230.toastRestoreDesc": "Import-Status-Toasts (Wird importiert, Erfolg, Fehler) werden jetzt beim Navigieren auf eine neue Seite während eines aktiven Imports wiederhergestellt, sodass laufende und abgeschlossene Importe immer sichtbar sind.",
 
@@ -235,7 +259,7 @@ export default {
   "changelog.v200.progressDesc": "Die Fortschrittsanzeige zeigt jetzt den tatsächlichen Upload-Fortschritt statt einer Fake-Animation, mittels axios onUploadProgress in der gesamten Pipeline.",
   "changelog.v200.toasts": "Glass-Benachrichtigungs-Toasts",
   "changelog.v200.toastsDesc": "Import-Statusmeldungen verwenden jetzt modernes Glasmorphismus-Design mit Backdrop-Blur, halbtransparenten Hintergründen und Spring-Animationen.",
-  "changelog.v200.fix403": "403-Fehler auf rule34.xxx behoben",
+  "changelog.v200.fix403": "403-Fehler auf CDN-geschützten Seiten behoben",
   "changelog.v200.fix403Desc": "Content-Uploads enthalten jetzt korrekte Credentials und Referer-Header, um den CDN-Hotlink-Schutz zu umgehen.",
   "changelog.v200.fixOctet": "Octet-Stream Upload-Fehler behoben",
   "changelog.v200.fixOctetDesc": "Binärdaten werden jetzt bei der Nachrichtenübermittlung base64-kodiert, um die Zerstörung von ArrayBuffern in Chrome MV3 Service Workern zu verhindern.",

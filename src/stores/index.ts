@@ -52,10 +52,16 @@ export const cfg = useStorageLocal(
     },
     autoRelationsEnabled: true,
     autoRelationThreshold: 60,
+    uploadAsContentSites: [] as string[],
   },
   {
     mergeDefaults(storageValue, defaults) {
-      const cfg = deepMerge(defaults, storageValue);
+      // Default deepMerge concatenates arrays, which would append default
+      // array entries on every load → duplicates after a few reloads. Replace
+      // arrays wholesale instead: stored value wins when present.
+      const cfg = deepMerge(defaults, storageValue, {
+        arrayMerge: (_target, source) => source,
+      });
       const oldVersion = cfg.version;
 
       // Crappy config migration.
@@ -68,6 +74,20 @@ export const cfg = useStorageLocal(
             if (!cfg.tagCategories.find((x) => x.name == cat.name)) {
               cfg.tagCategories.push(cat);
             }
+          }
+        // eslint-disable-next-line no-fallthrough
+        case 1:
+          cfg.version++;
+          // Ensure the per-site upload-as-content whitelist is always an array.
+          if (!Array.isArray(cfg.uploadAsContentSites)) {
+            cfg.uploadAsContentSites = [];
+          }
+        // eslint-disable-next-line no-fallthrough
+        case 2:
+          cfg.version++;
+          // Repair duplicates introduced by the previous deepMerge concat behavior.
+          if (Array.isArray(cfg.uploadAsContentSites)) {
+            cfg.uploadAsContentSites = [...new Set(cfg.uploadAsContentSites)];
           }
       }
 

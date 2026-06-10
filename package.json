@@ -2,7 +2,7 @@
   "name": "szuruchrome",
   "displayName": "SzuruChrome Reworked",
   "description": "Import media from various sites into szurubooru. Reworked fork with QoL improvements.",
-  "version": "2.3.0",
+  "version": "2.4.1",
   "private": true,
   "scripts": {
     "dev": "npm run clear && cross-env NODE_ENV=development run-p dev:*",
@@ -14,7 +14,8 @@
     "build:web": "vite build",
     "build:js": "vite build --config vite.config.content.ts",
     "pack": "cross-env NODE_ENV=production run-p pack:zip pack:xpi",
-    "pack:chrome": "npm run pack:zip",
+    "build:chrome": "cross-env NODE_ENV=production SZ_TARGET=chrome run-s clear build:web build:prepare build:js",
+    "pack:chrome": "cross-env SZ_TARGET=chrome run-s build:chrome pack:zip",
     "pack:zip": "rimraf extension.zip && jszip-cli add extension/* -o ./extension.zip",
     "pack:crx": "crx pack extension -o ./extension.crx",
     "pack:xpi": "cross-env WEB_EXT_ARTIFACTS_DIR=./ web-ext build --source-dir ./extension --filename extension.xpi --overwrite-dest",

@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.4.1] – June 2026
+
+### Changed
+- **Per-site "upload as content" is now a plain whitelist.** Removed the preloaded recommended-site suggestions and the drag-and-drop quick-add. Add whichever hosts you need manually; nothing is preloaded by default.
+- Neutralized store-listing and in-app copy (descriptions, changelog, option hints) to use generic "booru-style image board" wording instead of naming specific sites.
+
 ## [2.3.0] – May 2026
 
 ### Fixed

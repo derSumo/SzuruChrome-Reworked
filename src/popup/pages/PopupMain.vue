@@ -295,7 +295,21 @@ async function grabPost() {
       vm.name = `[${result.engine}] ${name}`;
 
       if (!cfg.value.addAllParsedTags) vm.tags.splice(0);
-      if (cfg.value.alwaysUploadAsContent && vm.name !== "[fallback] Upload as URL") {
+      const matchesUploadAsContentSite = (() => {
+        try {
+          const list = cfg.value.uploadAsContentSites ?? [];
+          if (list.length === 0 || !vm.pageUrl) return false;
+          const host = new URL(vm.pageUrl).host.toLowerCase().replace(/^www\./, "");
+          return list.some((entry) => {
+            try {
+              const target = new URL(entry.includes("://") ? entry : `https://${entry}`)
+                .host.toLowerCase().replace(/^www\./, "");
+              return host === target || host.endsWith("." + target);
+            } catch { return false; }
+          });
+        } catch { return false; }
+      })();
+      if ((cfg.value.alwaysUploadAsContent || matchesUploadAsContentSite) && vm.name !== "[fallback] Upload as URL") {
         vm.uploadMode = "content";
       }
 

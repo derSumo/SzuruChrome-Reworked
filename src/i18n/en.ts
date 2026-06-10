@@ -17,7 +17,7 @@ export default {
   "options.general.autoImportTags": "Auto-import all tags",
   "options.general.autoImportTagsHint": "Automatically imports all tags including their categories on supported pages (Danbooru, Zerochan, etc.).",
   "options.general.uploadAsContent": "Always upload as content",
-  "options.general.uploadAsContentHint": "Downloads the file and uploads it directly instead of passing the URL to szurubooru. Recommended to keep enabled — required for hotlink-protected sites (e.g. rule34.xxx) and for the similarity check to work reliably.",
+  "options.general.uploadAsContentHint": "Downloads the file and uploads it directly instead of passing the URL to szurubooru. Recommended to keep enabled — required for hotlink-protected sites and for the similarity check to work reliably.",
   "options.general.uploadAsContentWarning": "⚠ Recommended: Disabling this may cause similarity checks to fail, which means Auto-Relations won't work. The upload itself is not affected.",
   "options.general.addImplications": "Add tag implications",
   "options.general.addImplicationsHint": "Automatically adds implied tags when adding a tag.",
@@ -37,6 +37,13 @@ export default {
   "options.general.hotkeyLinkLastEnable": "Enable import+link shortcut",
   "options.general.hotkeyLinkLastEnableHint": "Uploads the current page and links the newly created post with the previously uploaded post as a relation.",
   "options.general.hotkeyLinkLastShortcutHint": "Choose a separate key combo for import + relation with the last post.",
+
+  // Per-site upload-as-content
+  "options.general.uploadAsContentSites": "Upload as content (per site)",
+  "options.general.uploadAsContentSitesHint": "A whitelist of hosts that always upload as content, regardless of the global toggle. Add whichever sites you need — useful for hosts with CDN hotlink protection. Type a host and press Add, or remove one by clicking the ✕.",
+  "options.general.uploadAsContentSitesEmpty": "No sites configured — type a host below and press Add.",
+  "options.general.uploadAsContentAdd": "Add",
+  "options.general.uploadAsContentAddPlaceholder": "e.g. example.com or https://example.com",
 
   // Interface
   "options.interface.title": "Interface",
@@ -156,9 +163,13 @@ export default {
 
   // ── Toast (content script) ────────────────────────────
   "toast.importing": "Importing…",
+  "toast.queued": "Queued…",
   "toast.imported": "✔ {link} imported successfully",
+  "toast.importedShort": "{link} imported",
   "toast.alreadyUploaded": "ℹ Already uploaded as {link}",
+  "toast.alreadyUploadedShort": "{link} (existing)",
   "toast.importFailed": "✘ Import failed: {message}",
+  "toast.staleScrape": "Page still transitioning — press hotkey again",
 
   // ── Background ────────────────────────────────────────
   "bg.noInstances": "No instances configured. Please add a Szuru instance in extension options first.",
@@ -168,19 +179,32 @@ export default {
   "bg.noActiveTab": "No active tab found for hotkey import.",
   "bg.importFailed": "Background import failed.",
   "bg.contextMenu": "Import to selected Szuru instance",
+  "bg.duplicateInBurst": "Duplicate — same page was already queued in this burst",
 
   // ── Changelog ─────────────────────────────────────────
   "changelog.title": "Changelog",
 
+  "changelog.v240.date": "May 2026",
+  "changelog.v240.queue": "Sequential import queue",
+  "changelog.v240.queueDesc": "Hotkey, context-menu and link-chain imports now process strictly one after another instead of racing in parallel. Big batches stay in order and don't trip over each other.",
+  "changelog.v240.linkChain": "Persistent link-chain on Hotkey + Link Last",
+  "changelog.v240.linkChainDesc": "Using the link-last hotkey multiple times in a row links every new post to all previous ones in the chain. A normal Quick-Import resets the chain.",
+  "changelog.v240.uploadAsContentSites": "Per-site \"upload as content\"",
+  "changelog.v240.uploadAsContentSitesDesc": "Maintain a per-site whitelist under General to force certain hosts to always upload as content. Add whichever hosts you need.",
+  "changelog.v240.compactToast": "Compact \"done\" toast",
+  "changelog.v240.compactToastDesc": "Finished imports collapse to a small chip with just the icon and post link, so a stack of finished toasts stays tidy.",
+  "changelog.v240.dedupToast": "Toast de-duplication on page navigation",
+  "changelog.v240.dedupToastDesc": "Bouncing back and forth between pages no longer spawns duplicate toasts. Imports already seen as finished in the current page session are skipped.",
+
   "changelog.v230.date": "May 2026",
   "changelog.v230.hotfixFormData": "Fixed Hotkey Import in Brave/Chrome (MV3)",
-  "changelog.v230.hotfixFormDataDesc": "Hotkey imports on CDN-protected sites (e.g. rule34.xxx) now work in Brave and Chrome. Root cause: Axios's fetch adapter in MV3 service workers silently failed on multipart FormData uploads. All temp-file uploads now use native fetch() instead.",
+  "changelog.v230.hotfixFormDataDesc": "Hotkey imports on CDN-protected booru sites now work in Brave and Chrome. Root cause: Axios's fetch adapter in MV3 service workers silently failed on multipart FormData uploads. All temp-file uploads now use native fetch() instead.",
   "changelog.v230.multiStrategyFetch": "Multi-Strategy CDN Fetch in Content Script",
   "changelog.v230.multiStrategyFetchDesc": "The content script now tries three approaches to bypass CDN hotlink protection: plain fetch with full Referer, fetch with cookies + Referer, and finally XHR with credentials (Firefox CORS bypass via host_permissions).",
   "changelog.v230.declarativeNetRequest": "declarativeNetRequest CORS Injection (Chrome/Brave)",
   "changelog.v230.declarativeNetRequestDesc": "Session rules are dynamically injected via declarativeNetRequest.updateSessionRules to add CORS headers to CDN responses, allowing the content script to read image bytes cross-origin in Chrome/Brave.",
   "changelog.v230.webRequestReferer": "webRequest Referer & CORS Injection (Firefox)",
-  "changelog.v230.webRequestRefererDesc": "onBeforeSendHeaders now replaces the Referer with the CDN's own origin for requests from the extension context, and onHeadersReceived injects CORS headers for rule34.xxx and Gelbooru CDNs.",
+  "changelog.v230.webRequestRefererDesc": "onBeforeSendHeaders now replaces the Referer with the CDN's own origin for requests from the extension context, and onHeadersReceived injects CORS headers for CDN-protected booru hosts.",
   "changelog.v230.toastRestore": "Toast Restoration After Page Navigation",
   "changelog.v230.toastRestoreDesc": "Import status toasts (importing, success, error) are now restored when navigating to a new page during an active import, so in-progress and completed imports are always visible.",
 
@@ -235,7 +259,7 @@ export default {
   "changelog.v200.progressDesc": "The progress bar now shows actual upload progress instead of a fake animation, using axios onUploadProgress throughout the entire pipeline.",
   "changelog.v200.toasts": "Glass Notify Toasts",
   "changelog.v200.toastsDesc": "Import status notifications now use modern glassmorphism design with backdrop blur, translucent backgrounds, and smooth spring animations.",
-  "changelog.v200.fix403": "Fixed 403 Errors on rule34.xxx",
+  "changelog.v200.fix403": "Fixed 403 Errors on CDN-protected sites",
   "changelog.v200.fix403Desc": "Content uploads now include proper credentials and Referer headers to bypass CDN hotlink protection.",
   "changelog.v200.fixOctet": "Fixed Octet-Stream Upload Errors",
   "changelog.v200.fixOctetDesc": "Binary data is now base64-encoded during message passing to prevent ArrayBuffer destruction in Chrome MV3 service workers.",

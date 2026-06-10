@@ -8,7 +8,6 @@ import {
   SetExactPostId,
   PostUpdateCommandData,
   FetchCommandData,
-  HotkeyImportCommandData,
   SzuruSiteConfig,
 } from "~/models";
 import { ImageSearchResult, PostAlreadyUploadedError, UpdatePoolRequest, UpdatePostRequest } from "~/api/models";
@@ -17,7 +16,25 @@ import { guessMimeTypeFromUrl } from "~/utils";
 
 const QUICK_IMPORT_MENU_ID = "szuru-quick-import-current-page";
 const DEFAULT_AUTO_RELATION_THRESHOLD = 60;
-const lastUploadedPostPerSite = new Map<string, { last?: number; previous?: number }>();
+
+// Per-site upload state used by the link-chain mode.
+// lastUploadedPostId  = most recent normal upload (seed for the next chain).
+// linkChain           = posts uploaded consecutively via hotkey_import_link_last.
+//                       A normal hotkey/context-menu/popup upload clears the chain.
+interface SiteUploadState {
+  lastUploadedPostId?: number;
+  linkChain: number[];
+}
+const siteStates = new Map<string, SiteUploadState>();
+
+function getSiteState(siteId: string): SiteUploadState {
+  let s = siteStates.get(siteId);
+  if (!s) {
+    s = { linkChain: [] };
+    siteStates.set(siteId, s);
+  }
+  return s;
+}
 
 // Tracks in-flight and recently finished imports so content scripts that
 // load on the next page can restore toasts that were still visible.
@@ -29,6 +46,7 @@ interface ActiveImportEntry {
   postUrl?: string;
   alreadyUploaded?: boolean;
   message?: string;
+  queued?: boolean;
 }
 const activeImports = new Map<string, ActiveImportEntry>();
 
@@ -78,12 +96,35 @@ async function removeCorsRule(ruleId: number): Promise<void> {
 type StoredConfig = {
   addPageUrlToSource?: boolean;
   alwaysUploadAsContent?: boolean;
+  uploadAsContentSites?: string[];
   addAllParsedTags?: boolean;
   selectedSiteId?: string;
   language?: string;
   autoRelationThreshold?: number;
+  autoRelationsEnabled?: boolean;
   sites: Array<{ id: string; domain: string; username: string; authToken: string }>;
 };
+
+function normalizeHost(value?: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    // Allow either bare hosts ("rule34.xxx") or full URLs.
+    const url = value.includes("://") ? new URL(value) : new URL("https://" + value);
+    return url.host.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return value.toLowerCase().replace(/^www\./, "");
+  }
+}
+
+function isUploadAsContentSiteMatch(pageUrl: string | undefined, sites: string[] | undefined): boolean {
+  const host = normalizeHost(pageUrl);
+  if (!host || !sites || sites.length === 0) return false;
+  return sites.some((entry) => {
+    const target = normalizeHost(entry);
+    if (!target) return false;
+    return host === target || host.endsWith("." + target);
+  });
+}
 
 function tryGetHost(url?: string) {
   if (!url) return undefined;
@@ -133,22 +174,30 @@ async function getActiveTabIdFallback() {
 function sendQuickImportStatus(
   tabId: number,
   status: "running" | "success" | "error" | "progress",
-  data: { message?: string; postId?: number; postUrl?: string; progress?: number; alreadyUploaded?: boolean; importId?: string } = {},
+  data: { message?: string; postId?: number; postUrl?: string; progress?: number; alreadyUploaded?: boolean; importId?: string; queued?: boolean } = {},
 ) {
-  const { importId, progress, postId, postUrl, alreadyUploaded, message } = data;
+  const { importId, progress, postId, postUrl, alreadyUploaded, message, queued } = data;
 
   // Keep activeImports in sync so new content scripts can restore toasts.
   if (importId) {
     if (status === "running") {
-      activeImports.set(importId, { tabId, status: "running" });
+      const prev = activeImports.get(importId);
+      activeImports.set(importId, { tabId, status: "running", queued: queued ?? prev?.queued });
     } else if (status === "progress") {
       const entry = activeImports.get(importId);
-      if (entry) entry.progress = progress;
-      else activeImports.set(importId, { tabId, status: "progress", progress });
+      if (entry) {
+        entry.progress = progress;
+        entry.queued = false;
+      } else {
+        activeImports.set(importId, { tabId, status: "progress", progress });
+      }
     } else if (status === "success" || status === "error") {
       activeImports.set(importId, { tabId, status, postId, postUrl, alreadyUploaded, message });
-      // Remove after 15 s — long enough for the next page to load and pick it up.
-      setTimeout(() => activeImports.delete(importId), 15000);
+      // Held briefly so the active page's push handler has a chance to land
+      // even if it briefly disconnected, but the restore path no longer
+      // serves finished entries so the user never sees a duplicate "done"
+      // toast on navigation.
+      setTimeout(() => activeImports.delete(importId), 8000);
     }
   }
 
@@ -278,7 +327,8 @@ function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredCo
 
   if (!cfg.addAllParsedTags) post.tags = [];
 
-  if (cfg.alwaysUploadAsContent && post.name !== "[fallback] Upload as URL") {
+  const siteSpecificForce = isUploadAsContentSiteMatch(post.pageUrl, cfg.uploadAsContentSites);
+  if ((cfg.alwaysUploadAsContent || siteSpecificForce) && post.name !== "[fallback] Upload as URL") {
     post.uploadMode = "content";
   }
 
@@ -294,7 +344,7 @@ function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredCo
   return post;
 }
 
-async function importCurrentPageInBackground(tabId: number, tabUrl?: string, importId?: string) {
+async function importCurrentPageInBackground(tabId: number, tabUrl?: string, importId?: string, preScrapedResults?: any) {
   if (isRestrictedTabUrl(tabUrl)) {
     throw new Error(t("bg.restrictedPage"));
   }
@@ -305,7 +355,11 @@ async function importCurrentPageInBackground(tabId: number, tabUrl?: string, imp
   const selectedSite = resolveSelectedSite(cfg, tabUrl);
   await persistSelectedSite(cfg, selectedSite.id);
 
-  const scrapeResults = await grabPostsFromTab(tabId);
+  // Use pre-scraped results when available (captured at enqueue/hotkey time)
+  // so a navigation between queue enqueue and queue processing doesn't make
+  // the task scrape the wrong page (which would then upload the same image
+  // twice → "already uploaded" → blocks any meaningful subsequent imports).
+  const scrapeResults = preScrapedResults ?? await grabPostsFromTab(tabId);
   const firstResultWithPosts = scrapeResults?.results?.find((result: any) => Array.isArray(result.posts) && result.posts.length > 0);
 
   if (!firstResultWithPosts) {
@@ -344,16 +398,16 @@ async function setupContextMenu() {
   });
 }
 
-async function fetchContentViaContentScript(tabId: number, url: string): Promise<{ base64: string; mimeType: string }> {
+async function fetchContentViaContentScript(tabId: number, url: string, importId?: string): Promise<{ base64: string; mimeType: string }> {
   const FETCH_TIMEOUT_MS = 30_000;
 
   const msgPromise = (async () => {
     try {
-      return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url }));
+      return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url, importId }));
     } catch (ex) {
       if (!isMissingContentScriptError(ex)) throw ex;
       await ensureContentScriptLoaded(tabId);
-      return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url }));
+      return await browser.tabs.sendMessage(tabId, new BrowserCommand("fetch_content", { url, importId }));
     }
   })();
 
@@ -413,7 +467,7 @@ async function tryAcquireContentToken(
     for (const candidateUrl of candidates) {
       const ruleId = await addCorsRule(candidateUrl, data.post.pageUrl).catch(() => 0);
       try {
-        const result = await fetchContentViaContentScript(data.tabId, candidateUrl);
+        const result = await fetchContentViaContentScript(data.tabId, candidateUrl, data.importId);
 
         // Content script returns base64-encoded data to survive message serialization.
         if (!result.base64 || typeof result.base64 !== "string") {
@@ -432,7 +486,10 @@ async function tryAcquireContentToken(
           continue;
         }
 
-        const tmpRes = await szuru.uploadTempFileFromBlob(blob, filename, onProgress);
+        // Download complete — signal 85% so the bar freezes near the end while
+        // the upload to szurubooru completes (usually < 1s on a local network).
+        onProgress?.(0.85);
+        const tmpRes = await szuru.uploadTempFileFromBlob(blob, filename);
         return tmpRes.token;
       } catch (ex) {
         console.warn("Content script fetch/upload failed for candidate URL:", candidateUrl, ex);
@@ -489,12 +546,13 @@ async function tryApplyAutoRelations(
   await szuru.updatePost(createdPostId, updateRequest);
 }
 
-async function tryLinkPostWithLastPostRelation(
+async function tryLinkPostWithRelations(
   selectedSite: SzuruSiteConfig,
   newPostId: number,
-  targetPostId: number,
+  targetPostIds: number[],
 ) {
-  if (newPostId == targetPostId) return;
+  const targets = [...new Set(targetPostIds)].filter((id) => id !== newPostId);
+  if (targets.length === 0) return;
 
   const szuru = SzurubooruApi.createFromConfig(selectedSite);
   const post = await szuru.getPost(newPostId);
@@ -502,17 +560,25 @@ async function tryLinkPostWithLastPostRelation(
     ?.map((x: any) => x?.id)
     .filter((x: unknown): x is number => typeof x == "number") ?? [];
 
-  if (existingRelationIds.includes(targetPostId)) return;
+  const missing = targets.filter((id) => !existingRelationIds.includes(id));
+  if (missing.length === 0) return;
 
   await szuru.updatePost(newPostId, {
     version: post.version,
-    relations: [...existingRelationIds, targetPostId],
+    relations: [...existingRelationIds, ...missing],
   });
 }
 
-function updateLastUploadedPost(siteId: string, postId: number) {
-  const prev = lastUploadedPostPerSite.get(siteId)?.last;
-  lastUploadedPostPerSite.set(siteId, { previous: prev, last: postId });
+function recordNormalUpload(siteId: string, postId: number) {
+  const state = getSiteState(siteId);
+  state.lastUploadedPostId = postId;
+  state.linkChain = [];
+}
+
+function recordChainUpload(siteId: string, postId: number) {
+  const state = getSiteState(siteId);
+  state.linkChain.push(postId);
+  state.lastUploadedPostId = postId;
 }
 
 async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> {
@@ -587,7 +653,6 @@ async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> 
 
     info.state = "uploaded";
     info.instancePostId = createdPost.id;
-    updateLastUploadedPost(data.selectedSite.id, createdPost.id);
     pushInfo();
 
     // Find tags with "default" category and update it
@@ -720,54 +785,160 @@ async function executeFetch(data: FetchCommandData) {
   return await fetch(data.url, data.options);
 }
 
-async function handleHotkeyImport(data: { url: string; importId?: string }) {
-  // The content script sends us the page URL. We need the active tab ID.
-  const tabId = await getActiveTabIdFallback();
-  if (!tabId) throw new Error(t("bg.noActiveTab"));
-  const importId = data.importId;
+// ── Sequential import queue ────────────────────────────────────
+// All hotkey, link-chain and context-menu imports go through this queue so
+// they run one after another instead of racing. The chain bookkeeping for
+// hotkey_import_link_last must happen in the queue worker (not at enqueue
+// time) so the chain reflects the actual upload order.
+interface ImportTask {
+  kind: "normal" | "link_last";
+  tabId: number;
+  tabUrl?: string;
+  importId: string;
+  scrapeResults?: any;
+}
+const importQueue: ImportTask[] = [];
+let queueRunning = false;
 
-  // Run the same import flow as the context menu, with status feedback.
-  try {
-    const result = await importCurrentPageInBackground(tabId, data.url, importId);
-    const postId = result?.info?.instancePostId;
-    const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
-    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded, importId });
-  } catch (ex) {
-    const message = getErrorMessage(ex);
-    console.error("Hotkey import failed:", message);
-    await sendQuickImportStatus(tabId, "error", { message, importId });
+// URLs already enqueued during the current hotkey burst. Cleared 3 s after
+// the queue goes idle so a deliberate re-upload later still works. Catches
+// the gelbooru "URL changed but DOM still old" race where two consecutive
+// hotkey presses end up scraping the same image.
+const burstPageUrls = new Set<string>();
+let burstClearTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleBurstClear() {
+  if (burstClearTimer) clearTimeout(burstClearTimer);
+  burstClearTimer = setTimeout(() => {
+    burstPageUrls.clear();
+    burstClearTimer = undefined;
+  }, 3000);
+}
+
+function cancelBurstClear() {
+  if (burstClearTimer) {
+    clearTimeout(burstClearTimer);
+    burstClearTimer = undefined;
   }
 }
 
-async function handleHotkeyImportLinkLast(data: HotkeyImportCommandData) {
-  const tabId = await getActiveTabIdFallback();
-  if (!tabId) throw new Error(t("bg.noActiveTab"));
-  const importId = data.importId;
+function getTaskPageUrl(task: ImportTask): string | undefined {
+  const post = task.scrapeResults?.results?.find((r: any) => Array.isArray(r?.posts) && r.posts.length > 0)?.posts?.[0];
+  return post?.pageUrl;
+}
 
+function enqueueImport(task: ImportTask) {
+  const pageUrl = getTaskPageUrl(task);
+  if (pageUrl && burstPageUrls.has(pageUrl)) {
+    // Same page URL was already enqueued in this burst — the user fired the
+    // hotkey faster than the site swapped DOM, so this scrape is a copy of
+    // the previous one. Reject up-front instead of silently double-uploading.
+    void sendQuickImportStatus(task.tabId, "error", {
+      importId: task.importId,
+      message: t("bg.duplicateInBurst"),
+    });
+    return;
+  }
+  if (pageUrl) burstPageUrls.add(pageUrl);
+  cancelBurstClear();
+  importQueue.push(task);
+  void sendQuickImportStatus(task.tabId, "running", { importId: task.importId, queued: importQueue.length > 0 && queueRunning });
+  void runQueue();
+}
+
+async function runQueue() {
+  if (queueRunning) return;
+  queueRunning = true;
   try {
-    const result = await importCurrentPageInBackground(tabId, data.url, importId);
-    const postId = result?.info?.instancePostId;
-    const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
-
-    if (postId) {
-      const lastState = lastUploadedPostPerSite.get(result.selectedSite.id);
-      const previousPostId = lastState?.previous;
-
-      if (previousPostId) {
-        try {
-          await tryLinkPostWithLastPostRelation(result.selectedSite, postId, previousPostId);
-        } catch (ex) {
-          console.warn("Hotkey relation to last post failed:", getErrorMessage(ex));
-        }
+    while (importQueue.length > 0) {
+      const task = importQueue.shift()!;
+      try {
+        await processImportTask(task);
+      } catch (ex) {
+        const message = getErrorMessage(ex);
+        console.error("Queued import failed:", message);
+        await sendQuickImportStatus(task.tabId, "error", { message, importId: task.importId });
       }
     }
-
-    await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result.alreadyUploaded, importId });
-  } catch (ex) {
-    const message = getErrorMessage(ex);
-    console.error("Hotkey import+link failed:", message);
-    await sendQuickImportStatus(tabId, "error", { message, importId });
+  } finally {
+    queueRunning = false;
+    // Burst ends when the queue is idle for a few seconds. Until then we
+    // keep rejecting same-URL duplicates so accidental double-fires don't
+    // upload the same image twice.
+    scheduleBurstClear();
   }
+}
+
+async function processImportTask(task: ImportTask) {
+  // Signal that this specific import has started its actual upload phase.
+  await sendQuickImportStatus(task.tabId, "running", { importId: task.importId, queued: false });
+
+  const result = await importCurrentPageInBackground(task.tabId, task.tabUrl, task.importId, task.scrapeResults);
+  const postId = result?.info?.instancePostId;
+  const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
+  const siteId = result.selectedSite.id;
+
+  if (postId) {
+    if (task.kind === "link_last") {
+      const state = getSiteState(siteId);
+      // If the chain is empty, seed it with the previous "normal" upload so
+      // the very first link-last upload still links to the last normal post.
+      const seed = state.linkChain.length === 0 && state.lastUploadedPostId
+        ? [state.lastUploadedPostId]
+        : [];
+      const targets = [...state.linkChain, ...seed];
+      if (targets.length > 0) {
+        try {
+          await tryLinkPostWithRelations(result.selectedSite, postId, targets);
+        } catch (ex) {
+          console.warn("Chain relation linking failed:", getErrorMessage(ex));
+        }
+      }
+      // Seed the chain with the previous upload too, so subsequent chain
+      // entries keep linking back to it (and to each other).
+      if (state.linkChain.length === 0 && state.lastUploadedPostId) {
+        state.linkChain.push(state.lastUploadedPostId);
+      }
+      recordChainUpload(siteId, postId);
+    } else {
+      // Normal upload resets any active chain so the next link-last starts fresh.
+      recordNormalUpload(siteId, postId);
+    }
+  }
+
+  await sendQuickImportStatus(task.tabId, "success", {
+    postId,
+    postUrl,
+    alreadyUploaded: result.alreadyUploaded,
+    importId: task.importId,
+  });
+}
+
+async function scrapeNowOrUndefined(tabId: number) {
+  try {
+    return await grabPostsFromTab(tabId);
+  } catch (ex) {
+    console.warn("Pre-enqueue scrape failed, queue task will rescrape:", getErrorMessage(ex));
+    return undefined;
+  }
+}
+
+async function handleHotkeyImport(data: { url: string; importId?: string; scrapeResults?: any }, senderTabId?: number) {
+  const tabId = senderTabId ?? await getActiveTabIdFallback();
+  if (!tabId) throw new Error(t("bg.noActiveTab"));
+  const importId = data.importId ?? crypto.randomUUID();
+  // Use scrape captured at hotkey time when present (avoids the queue picking
+  // up a different page after the user navigates between hotkey presses).
+  const scrapeResults = data.scrapeResults ?? await scrapeNowOrUndefined(tabId);
+  enqueueImport({ kind: "normal", tabId, tabUrl: data.url, importId, scrapeResults });
+}
+
+async function handleHotkeyImportLinkLast(data: { url: string; importId?: string; scrapeResults?: any }, senderTabId?: number) {
+  const tabId = senderTabId ?? await getActiveTabIdFallback();
+  if (!tabId) throw new Error(t("bg.noActiveTab"));
+  const importId = data.importId ?? crypto.randomUUID();
+  const scrapeResults = data.scrapeResults ?? await scrapeNowOrUndefined(tabId);
+  enqueueImport({ kind: "link_last", tabId, tabUrl: data.url, importId, scrapeResults });
 }
 
 async function messageHandler(cmd: BrowserCommand, sender: any): Promise<any> {
@@ -782,16 +953,28 @@ async function messageHandler(cmd: BrowserCommand, sender: any): Promise<any> {
     case "fetch":
       return executeFetch(cmd.data);
     case "hotkey_import":
-      return handleHotkeyImport(cmd.data);
+      return handleHotkeyImport(cmd.data, sender?.tab?.id);
     case "hotkey_import_link_last":
-      return handleHotkeyImportLinkLast(cmd.data);
+      return handleHotkeyImportLinkLast(cmd.data, sender?.tab?.id);
     case "get_active_imports": {
       const tabId = sender?.tab?.id;
       const result: Array<ActiveImportEntry & { importId: string }> = [];
+      if (typeof tabId !== "number") return result;
       for (const [importId, entry] of activeImports) {
-        if (entry.tabId === tabId) result.push({ importId, ...entry });
+        if (entry.tabId !== tabId) continue;
+        // Only restore still-in-progress imports. Finished states are
+        // delivered actively via sendQuickImportStatus to the current page,
+        // so replaying them here would only create duplicate toasts on
+        // rapid back/forward navigation.
+        if (entry.status === "success" || entry.status === "error") continue;
+        result.push({ importId, ...entry });
       }
       return result;
+    }
+    case "report_progress": {
+      const tabId = sender?.tab?.id;
+      if (tabId) sendQuickImportStatus(tabId, "progress", { progress: cmd.data.progress, importId: cmd.data.importId });
+      return;
     }
   }
 }
@@ -932,25 +1115,12 @@ if (browser.contextMenus) {
 
     void (async () => {
       const tabId = tab?.id ?? await getActiveTabIdFallback();
-      if (!tabId) throw new Error(t("bg.noActiveTab").replace("hotkey", "quick"));
-      await sendQuickImportStatus(tabId, "running", { importId });
-      return importCurrentPageInBackground(tabId, tab?.url, importId);
-    })()
-      .then(async (result) => {
-        console.log("Background quick import succeeded:", result);
-        const tabId = tab?.id ?? await getActiveTabIdFallback();
-        if (!tabId) return;
-
-        const postId = result?.info?.instancePostId;
-        const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
-        await sendQuickImportStatus(tabId, "success", { postId, postUrl, alreadyUploaded: result?.alreadyUploaded, importId });
-      })
-      .catch(async (ex) => {
-        const message = getErrorMessage(ex);
-        console.error("Background quick import failed:", message);
-        const tabId = tab?.id ?? await getActiveTabIdFallback();
-        if (!tabId) return;
-        await sendQuickImportStatus(tabId, "error", { message, importId });
-      });
+      if (!tabId) {
+        console.error("Context-menu quick import: no active tab");
+        return;
+      }
+      const scrapeResults = await scrapeNowOrUndefined(tabId);
+      enqueueImport({ kind: "normal", tabId, tabUrl: tab?.url, importId, scrapeResults });
+    })();
   });
 }

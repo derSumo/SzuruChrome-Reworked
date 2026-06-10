@@ -139,7 +139,8 @@ export type BrowserCommandName =
   | "quick_import_status"
   | "hotkey_import"
   | "hotkey_import_link_last"
-  | "get_active_imports";
+  | "get_active_imports"
+  | "report_progress";
 
 export class BrowserCommand<T = any> {
   name: BrowserCommandName;
