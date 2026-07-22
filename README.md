@@ -4,33 +4,57 @@
 
 Browser extension (Chrome / Firefox / Waterfox) for importing media from various booru sites into a self-hosted [szurubooru](https://github.com/rr-/szurubooru) instance.
 
-![Screenshot](./docs/screenshots/Default%20-%20Existing%20post%20found.png)
+![Popup](./docs/screenshots/popup.png)
 
 ---
 
-## What's New (vs. Original)
+## Features
 
+### Importing
 | Feature | Description |
 |---|---|
-| **Right-Click Quick Import** | Right-click any booru page → "Quick Import to szurubooru" — imports instantly without opening the popup. |
-| **Hotkey Import** | Configure a custom keyboard shortcut (e.g. `Ctrl+Shift+I`) to import the current page with one keypress. |
-| **Real Upload Progress** | Progress bar shows actual upload progress (via axios `onUploadProgress`) instead of a fake animation. |
-| **Glass Notify Toasts** | Status notifications use modern glassmorphism with backdrop blur, translucent backgrounds, and spring animations. |
-| **Modernized Options Page** | Redesigned settings with sidebar navigation, card layout, dark/light theme, and a built-in changelog. |
-| **403 Fix (CDN hotlink protection)** | Content uploads now include credentials and Referer headers to bypass CDN hotlink protection. |
-| **Octet-Stream Fix** | Binary data is base64-encoded during message passing to prevent ArrayBuffer destruction in MV3 service workers. |
-| **Preview Image Fix** | Popup preview images auto-fallback to blob URLs when direct loading fails due to hotlink protection. |
-| **MIME Type Detection** | Files with missing/incorrect MIME types (`application/octet-stream`) are auto-detected from the file extension. |
+| **Right-Click Quick Import** | Right-click any booru page → "Import to selected Szuru instance" — imports instantly without opening the popup. |
+| **Hotkey Import** | Configure a custom keyboard shortcut to import the current page with one keypress. |
+| **Import + Link Last Hotkey** | A second configurable hotkey imports the current page and links it with the previously uploaded post. Consecutive uses build a link-chain. |
+| **Batch Import** | On booru listing/gallery pages a launcher lets you select many posts and import them all at once — each is opened in a background tab, scraped, uploaded and closed, with a live progress bar. |
+| **Pool Import** | Enter a pool name before starting a batch and every imported post is added to that szurubooru pool, in selection order (creating the pool if it doesn't exist). |
+| **Sequential Import Queue** | Hotkey, context-menu and link-chain imports process strictly one after another, with automatic retry of transient failures (network drops, timeouts, HTTP 429/5xx). The queue survives a Chrome MV3 service-worker restart mid-burst. |
+| **Auto-Relations** | After upload a reverse-image search runs automatically; posts above the configurable similarity threshold (default **60%**) are linked as relations. Toggle in Settings → General. |
+| **Exact-Duplicate Handling** | For 100% matches the higher-quality file is kept and tags/sources are merged instead of creating a duplicate. |
+
+### Tags & metadata
+| Feature | Description |
+|---|---|
+| **Tag Blacklist & Rename Rules** | Patterns that drop or rewrite scraped tags before upload — exact names, `*` globs, or full regex with `$1` back-references, plus a live tester. Applies to popup and hotkey imports alike. |
+| **Tag Suggestions** | After the reverse search, the popup offers the most common tags from visually similar posts as one-click chips (no extra API calls). |
+| **Auto-import all tags** | Automatically imports all tags including their categories on supported pages (Danbooru, Zerochan, etc.). |
+| **Tag Category Colors** | Map szurubooru tag categories to display colors, with a native color picker and one-click import from the instance. |
+| **Fallback Source Tag Import** | When a fallback source URL is used, tags from the original booru source are also imported — no tags lost. |
+
+### Feedback & insight
+| Feature | Description |
+|---|---|
+| **"Already Imported" Badge** | A small pill on booru pages whose source already exists in your instance, linking to the post — no need to open the popup to check. |
+| **Statistics Tab** | Imports, duplicates, failures, success rate, transferred volume, a 30-day activity chart and per-host / per-instance breakdown — plus a list of failed imports you can retry with one click. |
+| **Config Export / Import** | Export all settings to a JSON file (optionally without auth tokens) and restore them — handy across browsers and profiles. |
+| **Glass Notify Toasts** | Import status notifications in a modern glassmorphism style with progress, download speed and a compact completion history. |
+| **Multi-Language (EN/DE)** | Switch the extension UI between English and German in Settings → Interface. |
+
+### Reliability fixes (vs. original)
+| Fix | Description |
+|---|---|
+| **403 / CDN hotlink protection** | Content uploads include credentials and Referer, with a multi-strategy CDN fetch (page-context fetch, credentials + Referer, XHR) and per-request CORS injection. |
+| **MV3 FormData upload** | Temp-file uploads use native `fetch()` instead of the Axios fetch adapter, which silently failed on multipart uploads in Chrome/Brave service workers. |
+| **Octet-Stream / ArrayBuffer** | Binary data is base64-encoded during message passing to survive MV3 serialization; missing MIME types are detected from the file extension. |
 | **Filename Preservation** | Uploaded files retain their original filename from the source URL. |
-| **Multi-Language (EN/DE)** | The extension UI can be switched between English and German in Settings → Interface. |
-| **Tag Category Color Picker** | Tag category colors can now be picked with a native color picker widget. |
-| **"Already Uploaded" Toast** | Hotkey/right-click imports now show "Already uploaded as Post #X" instead of a generic error. |
-| **🆕 Auto-Relations** | After upload, a reverse-image-search runs automatically. Posts above the configurable similarity threshold (default: **60%**) are linked as relations. Can be toggled on/off in Settings → General. |
-| **🆕 Fallback Source Tag Import** | When a fallback source URL is used during import, tags from the original booru source are also imported — no tags are lost. |
-| **Import + Link Last Hotkey** | A second configurable hotkey imports the current page and links it with the previously uploaded post. |
-| **iOS Glass Popup UI** | The popup features a full iOS-glass redesign: frosted panels, animated server pill, color-coded format chips (blue = video, purple = GIF, green = image), and animated tag pills. |
-| **Animated Server Picker** | The server selector is now a compact icon that expands into a labeled pill on click, with a dropdown to switch between instances. |
-| **Liquid UI Options** | The options page features a liquid glass design with frosted translucency, fluid animations, and modern aesthetics. |
+
+## Screenshots
+
+| Popup | Settings — General |
+|---|---|
+| ![Popup](./docs/screenshots/popup.png) | ![General](./docs/screenshots/options-general.png) |
+| **Settings — Interface** | **Settings — Tags** |
+| ![Interface](./docs/screenshots/options-interface.png) | ![Tags](./docs/screenshots/options-tags.png) |
 
 ## Installation
 
@@ -42,19 +66,19 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 
 > **Note:** For unsigned XPIs, set `xpinstall.signatures.required = false` in `about:config`.
 
-### Chrome
+### Chrome / Brave / Edge
 
-1. Build the extension (`npm run build`)
+1. Build the Chrome target: `npm run build:chrome`
 2. Open `chrome://extensions/`
 3. Enable **Developer mode**
-4. Click **Load unpacked**
-5. Select the `extension/` folder
+4. Click **Load unpacked** and select the `extension/` folder
 
 ## Build
 
 ```sh
 npm install          # Install dependencies
-npm run build        # Production build → ./extension/
+npm run build        # Firefox/Waterfox production build → ./extension/
+npm run build:chrome # Chrome/Brave/Edge production build → ./extension/
 npm run pack:xpi     # Build Firefox .xpi → ./extension.xpi
 npm run dev          # Dev mode with HMR
 ```
@@ -68,7 +92,7 @@ After building, load the `extension/` folder in your browser:
 - **Vue 3** + Composition API + `<script setup>`
 - **Pinia** for state management
 - **PrimeVue 3** + PrimeFlex for UI components
-- **Vite 5** as build tool
+- **Vite 5** as build tool (two configs: main app + content script)
 - **webextension-polyfill** for cross-browser compatibility
 - **neo-scraper** for booru page scraping
 
@@ -89,26 +113,53 @@ All original credit goes to [neobooru](https://github.com/neobooru) and contribu
 
 Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von verschiedenen Booru-Seiten in eine selbst-gehostete [szurubooru](https://github.com/rr-/szurubooru)-Instanz.
 
-## Was ist neu (vs. Original)
+## Funktionen
 
+### Import
 | Feature | Beschreibung |
 |---|---|
-| **Rechtsklick Quick Import** | Rechtsklick auf jeder Booru-Seite → "Quick Import to szurubooru" — importiert sofort ohne das Popup zu öffnen. |
-| **Hotkey Import** | Konfigurierbare Tastenkombination (z.B. `Ctrl+Shift+I`) zum sofortigen Import der aktuellen Seite. |
-| **Echter Upload-Fortschritt** | Die Fortschrittsanzeige zeigt den tatsächlichen Upload-Fortschritt (via axios `onUploadProgress`) statt einer Fake-Animation. |
-| **Glass-Benachrichtigungs-Toasts** | Status-Benachrichtigungen im modernen Glasmorphismus-Design mit Backdrop-Blur, halbtransparenten Hintergründen und Spring-Animationen. |
-| **Modernisierte Einstellungsseite** | Neu gestaltete Settings mit Sidebar-Navigation, Card-Layout, Dark/Light-Theme und integriertem Changelog. |
-| **403-Fix (CDN-Hotlink-Schutz)** | Content-Uploads enthalten jetzt Credentials und Referer-Header um den CDN-Hotlink-Schutz zu umgehen. |
-| **Octet-Stream-Fix** | Binärdaten werden bei der Nachrichtenübermittlung base64-kodiert, um die Zerstörung von ArrayBuffern in MV3 Service Workern zu verhindern. |
-| **Vorschaubild-Fix** | Vorschaubilder im Popup fallen automatisch auf Blob-URLs zurück, wenn das direkte Laden durch Hotlink-Schutz fehlschlägt. |
-| **MIME-Type-Erkennung** | Dateien mit fehlenden/falschen MIME-Typen (`application/octet-stream`) werden automatisch anhand der Dateiendung erkannt. |
+| **Rechtsklick Quick Import** | Rechtsklick auf jeder Booru-Seite → "Zur gewählten Szuru-Instanz importieren" — importiert sofort ohne das Popup zu öffnen. |
+| **Hotkey Import** | Konfigurierbare Tastenkombination zum sofortigen Import der aktuellen Seite. |
+| **Import + letzten Post verknüpfen** | Ein zweites Tastenkürzel importiert die aktuelle Seite und verknüpft sie mit dem zuvor hochgeladenen Post. Mehrfach-Nutzung bildet eine Verknüpfungskette. |
+| **Batch-Import** | Auf Listen-/Galerie-Seiten erscheint ein Starter, mit dem du viele Posts auswählen und auf einmal importieren kannst — jeder wird in einem Hintergrund-Tab geöffnet, gescrapt, hochgeladen und geschlossen, mit Live-Fortschritt. |
+| **Pool-Import** | Vor dem Batch einen Pool-Namen eingeben, und jeder importierte Post wird in Auswahlreihenfolge diesem szurubooru-Pool hinzugefügt (wird angelegt, falls nicht vorhanden). |
+| **Sequentielle Warteschlange** | Hotkey-, Kontextmenü- und Ketten-Importe laufen strikt nacheinander, mit automatischer Wiederholung vorübergehender Fehler (Netzwerkabbruch, Timeout, HTTP 429/5xx). Die Queue übersteht einen MV3-Service-Worker-Neustart mitten in einer Serie. |
+| **Auto-Relationen** | Nach dem Upload läuft automatisch eine Reverse-Image-Suche; Posts über dem konfigurierbaren Schwellwert (Standard **60%**) werden als Relationen verknüpft. Umschaltbar unter Einstellungen → Allgemein. |
+| **Exakte-Duplikat-Behandlung** | Bei 100%-Treffern wird die höherwertige Datei behalten und Tags/Quellen werden zusammengeführt, statt ein Duplikat anzulegen. |
+
+### Tags & Metadaten
+| Feature | Beschreibung |
+|---|---|
+| **Tag-Blacklist & Umbenennungs-Regeln** | Muster, die gescrapte Tags vor dem Upload verwerfen oder umschreiben — exakte Namen, `*`-Globs oder vollständige Regex mit `$1`-Rückverweisen, plus Live-Tester. Gilt für Popup- und Hotkey-Import. |
+| **Tag-Vorschläge** | Nach der Reverse-Suche bietet das Popup die häufigsten Tags ähnlicher Posts als Ein-Klick-Chips an (ohne zusätzliche API-Aufrufe). |
+| **Alle Tags automatisch importieren** | Importiert automatisch alle Tags inklusive Kategorien auf unterstützten Seiten (Danbooru, Zerochan, etc.). |
+| **Tag-Kategorie-Farben** | szurubooru-Tag-Kategorien auf Anzeigefarben mappen, mit nativem Farbwähler und Ein-Klick-Import aus der Instanz. |
+| **Fallback-Quellen-Tags** | Wird eine Fallback-Quelle genutzt, werden auch die Tags der Originalquelle importiert — keine Tags gehen verloren. |
+
+### Feedback & Übersicht
+| Feature | Beschreibung |
+|---|---|
+| **"Bereits importiert"-Badge** | Eine kleine Pille auf Booru-Seiten, deren Quelle schon in deiner Instanz existiert, mit Link zum Post — kein Popup-Öffnen zum Nachsehen nötig. |
+| **Statistik-Tab** | Importe, Duplikate, Fehler, Erfolgsquote, übertragenes Volumen, 30-Tage-Diagramm und Aufschlüsselung pro Host / Instanz — plus eine Liste fehlgeschlagener Importe, die sich mit einem Klick wiederholen lassen. |
+| **Konfiguration Export / Import** | Alle Einstellungen als JSON exportieren (optional ohne Auth-Tokens) und wiederherstellen — praktisch über Browser und Profile hinweg. |
+| **Glass-Benachrichtigungs-Toasts** | Import-Status im modernen Glasmorphismus mit Fortschritt, Download-Geschwindigkeit und kompaktem Verlauf. |
+| **Mehrsprachig (EN/DE)** | Extension-Oberfläche unter Einstellungen → Oberfläche zwischen Englisch und Deutsch umschalten. |
+
+### Zuverlässigkeits-Fixes (vs. Original)
+| Fix | Beschreibung |
+|---|---|
+| **403 / CDN-Hotlink-Schutz** | Content-Uploads enthalten Credentials und Referer, mit Multi-Strategie-CDN-Fetch (Page-Context-Fetch, Credentials + Referer, XHR) und CORS-Injektion pro Request. |
+| **MV3 FormData-Upload** | Temp-Datei-Uploads nutzen natives `fetch()` statt des Axios-Fetch-Adapters, der bei Multipart-Uploads in Chrome/Brave-Service-Workern still fehlschlug. |
+| **Octet-Stream / ArrayBuffer** | Binärdaten werden bei der Nachrichtenübermittlung base64-kodiert, um MV3-Serialisierung zu überleben; fehlende MIME-Typen werden aus der Dateiendung erkannt. |
 | **Dateinamen-Erhaltung** | Hochgeladene Dateien behalten ihren originalen Dateinamen aus der Quell-URL. |
-| **Mehrsprachig (EN/DE)** | Die Extension-Oberfläche kann in Einstellungen → Oberfläche zwischen Englisch und Deutsch umgeschaltet werden. |
-| **Tag-Kategorie-Farbwähler** | Tag-Kategorie-Farben können jetzt mit einem nativen Farbwähler-Widget ausgewählt werden. |
-| **"Bereits hochgeladen"-Toast** | Hotkey-/Rechtsklick-Importe zeigen jetzt "Bereits hochgeladen als Post #X" statt eines generischen Fehlers. |
-| **Auto-Relationen** | Posts mit ≥80% Ähnlichkeit werden nach dem Upload automatisch als Relationen verknüpft. |
-| **Import + letzten Post verknüpfen** | Ein zweites konfigurierbares Tastenkürzel importiert die aktuelle Seite und verknüpft sie mit dem zuvor hochgeladenen Post. |
-| **Liquid-UI-Einstellungen** | Die Einstellungsseite bietet ein flüssiges Glas-Design mit Frosted-Transluzenz, fließenden Animationen und moderner Ästhetik. |
+
+## Screenshots
+
+| Popup | Einstellungen — Allgemein |
+|---|---|
+| ![Popup](./docs/screenshots/popup.png) | ![Allgemein](./docs/screenshots/options-general.png) |
+| **Einstellungen — Oberfläche** | **Einstellungen — Tags** |
+| ![Oberfläche](./docs/screenshots/options-interface.png) | ![Tags](./docs/screenshots/options-tags.png) |
 
 ## Installation
 
@@ -120,19 +171,19 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 
 > **Hinweis:** Für unsignierte XPIs: `xpinstall.signatures.required = false` in `about:config` setzen.
 
-### Chrome
+### Chrome / Brave / Edge
 
-1. Extension bauen (`npm run build`)
+1. Chrome-Target bauen: `npm run build:chrome`
 2. `chrome://extensions/` öffnen
 3. **Entwicklermodus** aktivieren
-4. **Entpackte Erweiterung laden** klicken
-5. Den `extension/`-Ordner auswählen
+4. **Entpackte Erweiterung laden** klicken und den `extension/`-Ordner auswählen
 
 ## Build
 
 ```sh
 npm install          # Dependencies installieren
-npm run build        # Production-Build → ./extension/
+npm run build        # Firefox/Waterfox Production-Build → ./extension/
+npm run build:chrome # Chrome/Brave/Edge Production-Build → ./extension/
 npm run pack:xpi     # Firefox .xpi bauen → ./extension.xpi
 npm run dev          # Dev-Modus mit HMR
 ```
@@ -146,7 +197,7 @@ Nach dem Build den `extension/`-Ordner im Browser laden:
 - **Vue 3** + Composition API + `<script setup>`
 - **Pinia** für State-Management
 - **PrimeVue 3** + PrimeFlex für UI-Komponenten
-- **Vite 5** als Build-Tool
+- **Vite 5** als Build-Tool (zwei Configs: Haupt-App + Content-Script)
 - **webextension-polyfill** für Cross-Browser-Kompatibilität
 - **neo-scraper** zum Scrapen von Booru-Seiten
 
