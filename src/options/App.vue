@@ -1,8 +1,20 @@
 <script setup lang="ts">
 import { useColorMode } from "@vueuse/core";
+import byteSize from "byte-size";
 import { cfg } from "~/stores";
 import { getErrorMessage } from "~/utils";
-import { SzuruSiteConfig, TagCategoryColor, getDefaultTagCategories } from "~/models";
+import { BrowserCommand, SzuruSiteConfig, TagCategoryColor, getDefaultTagCategories } from "~/models";
+import { previewTagRules } from "~/tagRules";
+import {
+  STATS_STORAGE_KEY,
+  dailySeries,
+  emptyStats,
+  getStats,
+  successRate,
+  topHosts,
+  totalImports,
+  type ImportStats,
+} from "~/stats";
 import SzurubooruApi from "~/api";
 import { useI18n, setLanguage, type Language, availableLanguages } from "~/i18n";
 
@@ -20,6 +32,7 @@ const tabs = computed(() => [
   { id: "interface", label: t("options.tab.interface") },
   { id: "instances", label: t("options.tab.instances") },
   { id: "tags", label: t("options.tab.tags") },
+  { id: "stats", label: t("options.tab.stats") },
   { id: "changelog", label: t("options.tab.changelog") },
 ]);
 
@@ -213,6 +226,211 @@ function addNewSiteFromInput() {
   newUploadAsContentSite.value = "";
 }
 
+// ── Configuration backup (export / import) ───────────────────
+const importFileInput = ref<HTMLInputElement | null>(null);
+const backupMessage = ref("");
+const backupMessageType = ref<StatusType>("quiet");
+
+function setBackupMessage(text: string, type: StatusType = "success") {
+  backupMessage.value = text;
+  backupMessageType.value = type;
+}
+
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  // Revoke on the next tick so the click has committed the download first.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportConfig(includeTokens: boolean) {
+  const snapshot = JSON.parse(JSON.stringify(cfg.value));
+  if (!includeTokens) {
+    // Strip credentials so a shared backup can't leak instance access.
+    for (const site of snapshot.sites ?? []) site.authToken = "";
+  }
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadJson(snapshot, `szuruchrome-config-${stamp}.json`);
+  setBackupMessage(t("options.backup.exported"), "success");
+}
+
+function triggerImport() {
+  importFileInput.value?.click();
+}
+
+async function onImportFileChosen(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ""; // allow re-picking the same file later
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.sites)) {
+      throw new Error(t("options.backup.importInvalid"));
+    }
+
+    // Assign top-level keys individually rather than replacing cfg.value, so
+    // keys absent from an older backup keep their current defaults. Reset the
+    // version so the store's migration re-runs and fills any new fields.
+    for (const key of Object.keys(parsed)) {
+      (cfg.value as any)[key] = parsed[key];
+    }
+    cfg.value.version = 0;
+
+    setBackupMessage(t("options.backup.imported"), "success");
+  } catch (ex) {
+    setBackupMessage(t("options.backup.importFailed", { error: getErrorMessage(ex) }), "error");
+  }
+}
+
+// ── Tag blacklist / rename rules ─────────────────────────────
+const newBlacklistPattern = ref("");
+
+function addBlacklistPattern() {
+  const pattern = newBlacklistPattern.value.trim();
+  if (!pattern) return;
+  if (!cfg.value.tagRules.blacklist.includes(pattern)) {
+    cfg.value.tagRules.blacklist.push(pattern);
+  }
+  newBlacklistPattern.value = "";
+}
+
+function removeBlacklistPattern(index: number) {
+  cfg.value.tagRules.blacklist.splice(index, 1);
+}
+
+function addRewriteRule() {
+  cfg.value.tagRules.rewrites.push({ from: "", to: "" });
+}
+
+function removeRewriteRule(index: number) {
+  cfg.value.tagRules.rewrites.splice(index, 1);
+}
+
+// Live tester: accepts newline- or comma-separated tag names.
+const tagRuleTestInput = ref("");
+
+const tagRuleTestRows = computed(() => {
+  const names = tagRuleTestInput.value
+    .split(/[\n,]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (names.length === 0) return [];
+  return previewTagRules(names, cfg.value.tagRules);
+});
+
+// ── Statistics ───────────────────────────────────────────────
+const stats = ref<ImportStats>(emptyStats());
+const statsMessage = ref("");
+const statsMessageType = ref<StatusType>("quiet");
+
+async function refreshStats() {
+  stats.value = await getStats();
+}
+
+function setStatsMessage(text: string, type: StatusType = "success") {
+  statsMessage.value = text;
+  statsMessageType.value = type;
+}
+
+onMounted(refreshStats);
+
+// The background writes stats as imports complete; mirror that live so an
+// open options page doesn't show a stale snapshot.
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[STATS_STORAGE_KEY]) void refreshStats();
+});
+
+watch(activeTab, (tab) => {
+  if (tab === "stats") void refreshStats();
+});
+
+const statsTotalImports = computed(() => totalImports(stats.value));
+const statsSuccessRate = computed(() => successRate(stats.value));
+const statsSeries = computed(() => dailySeries(stats.value, 30));
+const statsSeriesMax = computed(() => Math.max(1, ...statsSeries.value.map((x) => x.count)));
+const statsHasActivity = computed(() => statsSeries.value.some((x) => x.count > 0));
+const statsTopHosts = computed(() => topHosts(stats.value, 8));
+
+// Per-instance breakdown. bySite is keyed by the (opaque) site id, so resolve
+// each to its configured label; unknown ids (a since-deleted instance) fall
+// back to a shortened id so the counts aren't silently dropped.
+const statsBySite = computed(() =>
+  Object.entries(stats.value.bySite)
+    .map(([siteId, counters]) => {
+      const site = cfg.value.sites.find((s) => s.id === siteId);
+      const label = site ? `${site.username} @ ${site.domain}` : `${siteId.slice(0, 8)}…`;
+      return {
+        siteId,
+        label,
+        ...counters,
+        total: counters.success + counters.duplicate + counters.error,
+      };
+    })
+    .sort((a, b) => b.total - a.total),
+);
+
+const statsTransferred = computed(() => {
+  const size = byteSize(stats.value.totalBytes);
+  return `${size.value} ${size.unit}`;
+});
+
+const statsAvgDuration = computed(() => {
+  const count = statsTotalImports.value;
+  if (count === 0 || stats.value.totalDurationMs === 0) return "–";
+  const seconds = stats.value.totalDurationMs / count / 1000;
+  return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
+});
+
+const statsLastImport = computed(() => {
+  if (!stats.value.lastImportAt) return t("options.stats.never");
+  return new Date(stats.value.lastImportAt).toLocaleString();
+});
+
+// Failures are stored oldest-first; the newest one is the one to act on.
+const statsFailures = computed(() => [...stats.value.failures].reverse());
+
+function shortDay(day: string) {
+  // "2026-07-21" → "21.07."
+  const [, month, date] = day.split("-");
+  return `${date}.${month}.`;
+}
+
+async function retryFailure(id: string) {
+  try {
+    await browser.runtime.sendMessage(new BrowserCommand("retry_failed_import", { id }));
+    setStatsMessage(t("options.stats.retryQueued"), "success");
+  } catch (ex) {
+    setStatsMessage(t("options.stats.retryFailed", { error: getErrorMessage(ex) }), "error");
+  }
+  await refreshStats();
+}
+
+// Stats mutations go through the background so they share its serialised write
+// chain and never clobber a concurrent recordImport from a finishing upload.
+async function dismissFailure(id: string) {
+  await browser.runtime.sendMessage(new BrowserCommand("stats_mutate", { op: "removeFailure", id }));
+  await refreshStats();
+}
+
+async function dismissAllFailures() {
+  await browser.runtime.sendMessage(new BrowserCommand("stats_mutate", { op: "clearFailures" }));
+  await refreshStats();
+}
+
+async function doResetStats() {
+  if (!window.confirm(t("options.stats.resetConfirm"))) return;
+  await browser.runtime.sendMessage(new BrowserCommand("stats_mutate", { op: "resetStats" }));
+  await refreshStats();
+  setStatsMessage("", "quiet");
+}
+
 </script>
 
 <template>
@@ -325,6 +543,99 @@ function addNewSiteFromInput() {
         </div>
 
         <div class="card">
+          <h3 class="card-title">{{ t("options.tagRules.title") }}</h3>
+          <p class="card-hint">{{ t("options.tagRules.hint") }}</p>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.tagRules.enable") }}</span>
+              <span class="option-hint">{{ t("options.tagRules.enableHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.tagRules.enabled" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <template v-if="cfg.tagRules.enabled">
+            <p class="rule-syntax">{{ t("options.tagRules.syntax") }}</p>
+
+            <h4 class="sub-title">{{ t("options.tagRules.blacklist") }}</h4>
+            <p class="card-hint">{{ t("options.tagRules.blacklistHint") }}</p>
+
+            <div class="uac-active">
+              <div v-if="cfg.tagRules.blacklist.length === 0" class="uac-empty">
+                {{ t("options.tagRules.blacklistEmpty") }}
+              </div>
+              <span v-for="(pattern, index) in cfg.tagRules.blacklist" :key="index" class="uac-chip">
+                <span class="uac-host">{{ pattern }}</span>
+                <button class="uac-remove" @click="removeBlacklistPattern(index)" :title="t('options.tagRules.remove')">✕</button>
+              </span>
+            </div>
+
+            <div class="uac-add-row">
+              <input
+                type="text"
+                :placeholder="t('options.tagRules.blacklistPlaceholder')"
+                v-model="newBlacklistPattern"
+                @keydown.enter.prevent="addBlacklistPattern"
+              />
+              <button class="btn btn-secondary" @click="addBlacklistPattern">{{ t("options.tagRules.add") }}</button>
+            </div>
+
+            <h4 class="sub-title">{{ t("options.tagRules.rewrites") }}</h4>
+            <p class="card-hint">{{ t("options.tagRules.rewritesHint") }}</p>
+
+            <div class="rule-table">
+              <div class="rule-table-header">
+                <span>{{ t("options.tagRules.from") }}</span>
+                <span>{{ t("options.tagRules.to") }}</span>
+                <span></span>
+              </div>
+              <div v-for="(rule, index) in cfg.tagRules.rewrites" :key="index" class="rule-table-row">
+                <input type="text" v-model="rule.from" :placeholder="t('options.tagRules.fromPlaceholder')" />
+                <input type="text" v-model="rule.to" :placeholder="t('options.tagRules.toPlaceholder')" />
+                <button class="btn-icon btn-remove" @click="removeRewriteRule(index)" :title="t('options.tagRules.remove')">✕</button>
+              </div>
+              <div v-if="cfg.tagRules.rewrites.length === 0" class="tag-table-empty">
+                {{ t("options.tagRules.rewritesEmpty") }}
+              </div>
+            </div>
+
+            <div class="card-actions">
+              <button class="btn btn-primary" @click="addRewriteRule">{{ t("options.tagRules.addRewrite") }}</button>
+            </div>
+
+            <h4 class="sub-title">{{ t("options.tagRules.tester") }}</h4>
+            <p class="card-hint">{{ t("options.tagRules.testerHint") }}</p>
+            <textarea
+              class="rule-tester-input"
+              rows="4"
+              v-model="tagRuleTestInput"
+              :placeholder="t('options.tagRules.testerPlaceholder')"
+            ></textarea>
+
+            <div class="rule-preview">
+              <div v-if="tagRuleTestRows.length === 0" class="uac-empty">
+                {{ t("options.tagRules.testerEmpty") }}
+              </div>
+              <div
+                v-for="(row, index) in tagRuleTestRows"
+                :key="index"
+                class="rule-preview-row"
+                :class="{ dropped: row.dropped, changed: row.changed }"
+              >
+                <span class="rule-preview-in">{{ row.input }}</span>
+                <span class="rule-preview-arrow">→</span>
+                <span v-if="row.dropped" class="rule-preview-out muted">{{ t("options.tagRules.testerDropped") }}</span>
+                <span v-else-if="row.changed" class="rule-preview-out">{{ row.output }}</span>
+                <span v-else class="rule-preview-out muted">{{ t("options.tagRules.testerUnchanged") }}</span>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="card">
           <h3 class="card-title">{{ t("options.general.autoRelations") }}</h3>
 
           <div class="option-row">
@@ -355,6 +666,16 @@ function addNewSiteFromInput() {
                 />
                 <span class="slider-value">{{ cfg.autoRelationThreshold }}%</span>
               </div>
+            </div>
+            <div class="option-row">
+              <div class="option-info">
+                <span class="option-label">{{ t("options.general.replaceExactDuplicates") }}</span>
+                <span class="option-hint">{{ t("options.general.replaceExactDuplicatesHint") }}</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" v-model="cfg.replaceExactDuplicates" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              </label>
             </div>
           </template>
         </div>
@@ -432,6 +753,95 @@ function addNewSiteFromInput() {
               </div>
             </div>
           </template>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.badge.title") }}</h3>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.badge.enable") }}</span>
+              <span class="option-hint">{{ t("options.badge.enableHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.importedBadge.enabled" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row" v-if="cfg.importedBadge.enabled">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.badge.showMissing") }}</span>
+              <span class="option-hint">{{ t("options.badge.showMissingHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.importedBadge.showWhenNotImported" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.batch.title") }}</h3>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.batch.enable") }}</span>
+              <span class="option-hint">{{ t("options.batch.enableHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.batchImport.enabled" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row" v-if="cfg.batchImport.enabled">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.batch.concurrency") }}</span>
+              <span class="option-hint">{{ t("options.batch.concurrencyHint") }}</span>
+            </div>
+            <div class="slider-group">
+              <input type="range" min="1" max="3" step="1" v-model.number="cfg.batchImport.concurrency" class="lq-slider" />
+              <span class="slider-value">{{ cfg.batchImport.concurrency }}×</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.queue.title") }}</h3>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.queue.retryEnable") }}</span>
+              <span class="option-hint">{{ t("options.queue.retryEnableHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.queueRetry.enabled" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row" v-if="cfg.queueRetry.enabled">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.queue.maxAttempts") }}</span>
+              <span class="option-hint">{{ t("options.queue.maxAttemptsHint") }}</span>
+            </div>
+            <div class="slider-group">
+              <input type="range" min="1" max="6" step="1" v-model.number="cfg.queueRetry.maxAttempts" class="lq-slider" />
+              <span class="slider-value">{{ cfg.queueRetry.maxAttempts }}×</span>
+            </div>
+          </div>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.queue.stats") }}</span>
+              <span class="option-hint">{{ t("options.queue.statsHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.statsEnabled" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -530,6 +940,26 @@ function addNewSiteFromInput() {
             </div>
           </div>
         </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.backup.title") }}</h3>
+          <p class="card-hint">{{ t("options.backup.hint") }}</p>
+
+          <div class="card-actions backup-actions">
+            <button class="btn btn-primary" @click="exportConfig(true)">{{ t("options.backup.export") }}</button>
+            <button class="btn btn-secondary" @click="exportConfig(false)">{{ t("options.backup.exportNoTokens") }}</button>
+            <button class="btn btn-secondary" @click="triggerImport">{{ t("options.backup.import") }}</button>
+            <input
+              ref="importFileInput"
+              type="file"
+              accept="application/json,.json"
+              class="hidden-file-input"
+              @change="onImportFileChosen"
+            />
+          </div>
+
+          <p v-if="backupMessage" class="status-text" :class="`status-${backupMessageType}`">{{ backupMessage }}</p>
+        </div>
       </div>
 
       <!-- Instances Tab -->
@@ -621,11 +1051,180 @@ function addNewSiteFromInput() {
         </div>
       </div>
 
+      <!-- Statistics Tab -->
+      <div v-if="activeTab === 'stats'" class="tab-content">
+        <h2 class="tab-title">{{ t("options.stats.title") }}</h2>
+
+        <p v-if="!cfg.statsEnabled" class="card-hint stats-disabled">{{ t("options.stats.disabled") }}</p>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.stats.overview") }}</h3>
+
+          <div class="stat-grid">
+            <div class="stat-tile">
+              <span class="stat-value">{{ statsTotalImports }}</span>
+              <span class="stat-label">{{ t("options.stats.imported") }}</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-value">{{ stats.totalDuplicates }}</span>
+              <span class="stat-label">{{ t("options.stats.duplicates") }}</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-value" :class="{ bad: stats.totalErrors > 0 }">{{ stats.totalErrors }}</span>
+              <span class="stat-label">{{ t("options.stats.errors") }}</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-value">{{ statsSuccessRate }}%</span>
+              <span class="stat-label">{{ t("options.stats.successRate") }}</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-value">{{ statsTransferred }}</span>
+              <span class="stat-label">{{ t("options.stats.transferred") }}</span>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-value">{{ statsAvgDuration }}</span>
+              <span class="stat-label">{{ t("options.stats.avgDuration") }}</span>
+            </div>
+          </div>
+
+          <div class="stat-footnote">{{ t("options.stats.lastImport") }}: {{ statsLastImport }}</div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.stats.activity") }}</h3>
+
+          <div v-if="!statsHasActivity" class="uac-empty">{{ t("options.stats.activityEmpty") }}</div>
+          <div v-else class="stat-chart">
+            <div
+              v-for="entry in statsSeries"
+              :key="entry.day"
+              class="stat-bar-slot"
+              :title="`${shortDay(entry.day)} — ${entry.count}`"
+            >
+              <div
+                class="stat-bar"
+                :class="{ empty: entry.count === 0 }"
+                :style="{ height: `${Math.max((entry.count / statsSeriesMax) * 100, entry.count > 0 ? 6 : 2)}%` }"
+              ></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" v-if="statsTopHosts.length > 0">
+          <h3 class="card-title">{{ t("options.stats.topHosts") }}</h3>
+
+          <div class="host-table">
+            <div class="host-table-header">
+              <span>{{ t("options.stats.host") }}</span>
+              <span>{{ t("options.stats.colOk") }}</span>
+              <span>{{ t("options.stats.colDupe") }}</span>
+              <span>{{ t("options.stats.colFail") }}</span>
+            </div>
+            <div v-for="host in statsTopHosts" :key="host.host" class="host-table-row">
+              <span class="host-name">{{ host.host }}</span>
+              <span>{{ host.success }}</span>
+              <span>{{ host.duplicate }}</span>
+              <span :class="{ bad: host.error > 0 }">{{ host.error }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" v-if="statsBySite.length > 1">
+          <h3 class="card-title">{{ t("options.stats.byInstance") }}</h3>
+
+          <div class="host-table">
+            <div class="host-table-header">
+              <span>{{ t("options.stats.instance") }}</span>
+              <span>{{ t("options.stats.colOk") }}</span>
+              <span>{{ t("options.stats.colDupe") }}</span>
+              <span>{{ t("options.stats.colFail") }}</span>
+            </div>
+            <div v-for="site in statsBySite" :key="site.siteId" class="host-table-row">
+              <span class="host-name">{{ site.label }}</span>
+              <span>{{ site.success }}</span>
+              <span>{{ site.duplicate }}</span>
+              <span :class="{ bad: site.error > 0 }">{{ site.error }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.stats.failures") }}</h3>
+          <p class="card-hint">{{ t("options.stats.failuresHint") }}</p>
+
+          <div v-if="statsFailures.length === 0" class="uac-empty">{{ t("options.stats.noFailures") }}</div>
+
+          <div v-for="failure in statsFailures" :key="failure.id" class="failure-row">
+            <div class="failure-info">
+              <span class="failure-message">{{ failure.message }}</span>
+              <a
+                v-if="failure.pageUrl"
+                class="failure-url"
+                :href="failure.pageUrl"
+                target="_blank"
+                rel="noopener"
+              >{{ failure.pageUrl }}</a>
+              <span class="failure-meta">
+                {{ new Date(failure.at).toLocaleString() }} · {{ t("options.stats.attempts", { count: failure.attempts }) }}
+              </span>
+            </div>
+            <div class="failure-actions">
+              <button
+                class="btn btn-secondary"
+                :disabled="!failure.scrapeResults"
+                @click="retryFailure(failure.id)"
+              >{{ t("options.stats.retry") }}</button>
+              <button class="btn-icon btn-remove" @click="dismissFailure(failure.id)" :title="t('options.stats.dismiss')">✕</button>
+            </div>
+          </div>
+
+          <div class="card-actions" v-if="statsFailures.length > 0">
+            <button class="btn btn-secondary" @click="dismissAllFailures">{{ t("options.stats.clearFailures") }}</button>
+          </div>
+        </div>
+
+        <div class="card-actions">
+          <span v-if="statsMessage" class="status-text" :class="`status-${statsMessageType}`">{{ statsMessage }}</span>
+          <button class="btn btn-danger ml-auto" @click="doResetStats">{{ t("options.stats.reset") }}</button>
+        </div>
+      </div>
+
       <!-- Changelog Tab -->
       <div v-if="activeTab === 'changelog'" class="tab-content">
         <h2 class="tab-title">{{ t("changelog.title") }}</h2>
 
         <div class="card changelog-card">
+          <div class="changelog-entry">
+            <div class="changelog-version">v2.7.0</div>
+            <div class="changelog-date">{{ t("changelog.v270.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v270.batch") }}</strong> — {{ t("changelog.v270.batchDesc") }}</li>
+              <li><strong>{{ t("changelog.v270.pool") }}</strong> — {{ t("changelog.v270.poolDesc") }}</li>
+            </ul>
+          </div>
+
+          <div class="changelog-entry">
+            <div class="changelog-version">v2.6.0</div>
+            <div class="changelog-date">{{ t("changelog.v260.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v260.backup") }}</strong> — {{ t("changelog.v260.backupDesc") }}</li>
+              <li><strong>{{ t("changelog.v260.tagSuggestions") }}</strong> — {{ t("changelog.v260.tagSuggestionsDesc") }}</li>
+              <li><strong>{{ t("changelog.v260.instanceStats") }}</strong> — {{ t("changelog.v260.instanceStatsDesc") }}</li>
+            </ul>
+          </div>
+
+          <div class="changelog-entry">
+            <div class="changelog-version">v2.5.0</div>
+            <div class="changelog-date">{{ t("changelog.v250.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v250.tagRules") }}</strong> — {{ t("changelog.v250.tagRulesDesc") }}</li>
+              <li><strong>{{ t("changelog.v250.importedBadge") }}</strong> — {{ t("changelog.v250.importedBadgeDesc") }}</li>
+              <li><strong>{{ t("changelog.v250.retry") }}</strong> — {{ t("changelog.v250.retryDesc") }}</li>
+              <li><strong>{{ t("changelog.v250.durableQueue") }}</strong> — {{ t("changelog.v250.durableQueueDesc") }}</li>
+              <li><strong>{{ t("changelog.v250.stats") }}</strong> — {{ t("changelog.v250.statsDesc") }}</li>
+            </ul>
+          </div>
+
           <div class="changelog-entry">
             <div class="changelog-version">v2.4.0</div>
             <div class="changelog-date">{{ t("changelog.v240.date") }}</div>
@@ -1230,6 +1829,267 @@ html:not(.dark) .page select option {
   padding: 16px 0;
   color: var(--lq-text-secondary);
   font-size: 13px;
+}
+
+/* ── Tag blacklist / rename rules ──────────────────────── */
+.sub-title {
+  margin: 22px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--lq-text-tertiary);
+}
+
+.rule-syntax {
+  margin: 4px 0 0;
+  padding: 9px 12px;
+  border-radius: var(--lq-radius-sm);
+  background: var(--lq-input-bg);
+  color: var(--lq-text-secondary);
+  font-family: var(--lq-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.rule-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rule-table-header,
+.rule-table-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.rule-table-header {
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--lq-surface-border);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--lq-text-tertiary);
+}
+
+.rule-table-row {
+  padding: 4px 0;
+  border-radius: var(--lq-radius-xs);
+  transition: background var(--lq-transition);
+
+  &:hover { background: var(--lq-accent-soft); }
+
+  input { font-family: var(--lq-mono); font-size: 12px; }
+}
+
+.rule-tester-input {
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 12px;
+  border: 1px solid var(--lq-input-border);
+  border-radius: var(--lq-radius-sm);
+  background: var(--lq-input-bg);
+  color: var(--lq-text);
+  font-family: var(--lq-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+
+  &:focus {
+    outline: none;
+    border-color: var(--lq-input-focus);
+  }
+}
+
+.rule-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.rule-preview-row {
+  display: grid;
+  grid-template-columns: 1fr 18px 1fr;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: var(--lq-radius-xs);
+  background: var(--lq-input-bg);
+  font-family: var(--lq-mono);
+  font-size: 12px;
+
+  &.dropped .rule-preview-in { text-decoration: line-through; opacity: 0.55; }
+  &.changed { background: var(--lq-accent-soft); }
+}
+
+.rule-preview-arrow { color: var(--lq-text-tertiary); text-align: center; }
+.rule-preview-in,
+.rule-preview-out { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-preview-out.muted { color: var(--lq-text-tertiary); font-style: italic; }
+
+/* ── Configuration backup ──────────────────────────────── */
+.backup-actions { flex-wrap: wrap; }
+.hidden-file-input { display: none; }
+
+/* ── Statistics ────────────────────────────────────────── */
+.stats-disabled {
+  margin: -8px 0 16px;
+  color: var(--lq-warning);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 16px;
+  border: 1px solid var(--lq-surface-border);
+  border-radius: var(--lq-radius-sm);
+  background: var(--lq-input-bg);
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--lq-text);
+
+  &.bad { color: var(--lq-danger); }
+}
+
+.stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--lq-text-secondary);
+}
+
+.stat-footnote {
+  margin-top: 14px;
+  color: var(--lq-text-tertiary);
+  font-size: 11px;
+}
+
+.stat-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 120px;
+  padding-top: 6px;
+}
+
+.stat-bar-slot {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  height: 100%;
+  min-width: 0;
+}
+
+.stat-bar {
+  width: 100%;
+  border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(180deg, var(--lq-accent), var(--lq-accent-glow));
+  transition: height var(--lq-transition);
+
+  &.empty { background: var(--lq-input-border); }
+}
+
+.host-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.host-table-header,
+.host-table-row {
+  display: grid;
+  grid-template-columns: 1fr 60px 60px 60px;
+  gap: 8px;
+  align-items: center;
+}
+
+.host-table-header {
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--lq-surface-border);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--lq-text-tertiary);
+}
+
+.host-table-row {
+  padding: 7px 8px;
+  border-radius: var(--lq-radius-xs);
+  font-size: 13px;
+  transition: background var(--lq-transition);
+
+  &:hover { background: var(--lq-accent-soft); }
+
+  .bad { color: var(--lq-danger); }
+}
+
+.host-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--lq-mono);
+  font-size: 12px;
+}
+
+.failure-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--lq-surface-border);
+
+  &:last-of-type { border-bottom: 0; }
+}
+
+.failure-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.failure-message {
+  color: var(--lq-danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.failure-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--lq-text-secondary);
+  font-family: var(--lq-mono);
+  font-size: 11px;
+}
+
+.failure-meta {
+  color: var(--lq-text-tertiary);
+  font-size: 11px;
+}
+
+.failure-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
 }
 
 .color-input {

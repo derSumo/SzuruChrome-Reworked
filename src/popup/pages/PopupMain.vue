@@ -23,6 +23,7 @@ import {
   SzuruSiteConfig,
   PoolDetails,
 } from "~/models";
+import { applyTagRulesToTagList } from "~/tagRules";
 import { isMobile } from "~/env";
 import { DeepReadonly } from "vue";
 import { cfg, usePopupStore } from "~/stores";
@@ -295,6 +296,8 @@ async function grabPost() {
       vm.name = `[${result.engine}] ${name}`;
 
       if (!cfg.value.addAllParsedTags) vm.tags.splice(0);
+      // Blacklist / rename rules, identical to the background import path.
+      vm.tags = applyTagRulesToTagList(vm.tags, cfg.value.tagRules);
       const matchesUploadAsContentSite = (() => {
         try {
           const list = cfg.value.uploadAsContentSites ?? [];
@@ -412,6 +415,43 @@ function addTag(tag: TagDetails) {
   }
 }
 
+// Rank tags by how many of the visually similar posts carry them, drop any the
+// scrape already produced, and keep the top handful as one-click suggestions.
+// The reverse-search response already includes each similar post's full tag
+// list, so this needs no extra API calls.
+function buildTagSuggestions(post: ScrapedPostDetails, similarPosts: { post: any }[]): TagDetails[] {
+  const existing = new Set(post.tags.map((x) => x.name.toLowerCase()));
+  const counts = new Map<string, { tag: TagDetails; count: number }>();
+
+  for (const similar of similarPosts) {
+    for (const micro of similar.post?.tags ?? []) {
+      const name: string | undefined = micro?.names?.[0];
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (existing.has(key)) continue;
+      const entry = counts.get(key);
+      if (entry) entry.count++;
+      else counts.set(key, { tag: TagDetails.fromMicroTag(micro), count: 1 });
+    }
+  }
+
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || (b.tag.usages ?? 0) - (a.tag.usages ?? 0))
+    .slice(0, 12)
+    .map((x) => x.tag);
+}
+
+// Suggestions minus anything the user has meanwhile added, so a chip vanishes
+// the moment its tag lands on the post.
+const suggestedTags = computed<TagDetails[]>(() => {
+  if (!pop.selectedPost || !cfg.value.selectedSiteId) return [];
+  const isd = pop.selectedPost.instanceSpecificData[cfg.value.selectedSiteId];
+  const suggestions = isd?.suggestedTags;
+  if (!suggestions?.length) return [];
+  const current = new Set(pop.selectedPost.tags.map((x) => x.name.toLowerCase()));
+  return suggestions.filter((tag) => !current.has(tag.name.toLowerCase())) as TagDetails[];
+});
+
 function addPool(pool: PoolDetails) {
   if (pop.selectedPost) {
     if (pool.name.length > 0 && pop.selectedPost.pools.find((x) => x.name == pool.name) == undefined) {
@@ -446,6 +486,7 @@ async function findSimilar(post: ScrapedPostDetails | undefined) {
       exactPostId: res.exactPost?.id,
       similarPosts: res.similarPosts.map((x) => <SimpleSimilarPost>{ postId: x.post.id, distance: x.distance }),
     };
+    isd.suggestedTags = buildTagSuggestions(post, res.similarPosts);
   } catch (ex: any) {
     isd.genericError = "Couldn't reverse search. " + getErrorMessage(ex);
   }
@@ -855,6 +896,17 @@ useDark();
             <PopupSection :header="t('popup.tags')" toggleable v-model="cfg.popup.expandTags">
               <div class="section-row">
                 <TagInput :szuru="szuru" @add-tag="addTag" />
+              </div>
+              <div v-if="suggestedTags.length > 0" class="section-row glass-suggest-row">
+                <span class="glass-suggest-label">{{ t("popup.suggestedTags") }}</span>
+                <ul class="glass-suggest-list">
+                  <li v-for="tag in suggestedTags" :key="tag.name">
+                    <button class="glass-suggest-chip" :class="getTagClasses(tag)" @click="addTag(tag)" :title="t('popup.suggestedTagsAdd')">
+                      <span v-html="breakTagName(tag.name)"></span>
+                      <span class="glass-suggest-plus">+</span>
+                    </button>
+                  </li>
+                </ul>
               </div>
               <div class="section-row glass-tags-toolbar">
                 <select v-model="cfg.popup.tagSortMode" class="glass-select glass-select-xs">
@@ -1372,6 +1424,56 @@ useDark();
   cursor: pointer;
   transition: all var(--g-transition);
   &:hover { border-color: var(--g-border-hi); color: var(--g-text); }
+}
+
+/* â”€â”€ Suggested tags (from reverse search) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+.glass-suggest-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.glass-suggest-label {
+  flex-shrink: 0;
+  padding-top: 3px;
+  color: var(--g-text-2);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.glass-suggest-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.glass-suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--g-border-hi);
+  background: transparent;
+  color: var(--g-text);
+  font-size: 10px;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: all var(--g-transition);
+
+  &:hover {
+    border-style: solid;
+    background: var(--g-surface);
+    transform: translateY(-1px);
+  }
+}
+
+.glass-suggest-plus {
+  opacity: 0.55;
+  font-weight: 700;
 }
 
 /* â”€â”€ Compact tags / pools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */

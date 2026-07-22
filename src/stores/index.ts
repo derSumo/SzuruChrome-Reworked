@@ -52,7 +52,30 @@ export const cfg = useStorageLocal(
     },
     autoRelationsEnabled: true,
     autoRelationThreshold: 60,
+    replaceExactDuplicates: true,
     uploadAsContentSites: [] as string[],
+    tagRules: {
+      enabled: true,
+      blacklist: [] as string[],
+      rewrites: [] as Array<{ from: string; to: string }>,
+    },
+    importedBadge: {
+      enabled: true,
+      // Off by default: a "not imported" pill on every booru page is noise for
+      // users who only import a fraction of what they browse.
+      showWhenNotImported: false,
+    },
+    queueRetry: {
+      enabled: true,
+      maxAttempts: 3,
+    },
+    statsEnabled: true,
+    batchImport: {
+      // Shows the "select & import" launcher on booru listing/gallery pages.
+      enabled: true,
+      // Cap concurrent background tabs the batch runner opens at once.
+      concurrency: 1,
+    },
   },
   {
     mergeDefaults(storageValue, defaults) {
@@ -88,6 +111,24 @@ export const cfg = useStorageLocal(
           // Repair duplicates introduced by the previous deepMerge concat behavior.
           if (Array.isArray(cfg.uploadAsContentSites)) {
             cfg.uploadAsContentSites = [...new Set(cfg.uploadAsContentSites)];
+          }
+        // eslint-disable-next-line no-fallthrough
+        case 3:
+          cfg.version++;
+          // Tag rules arrive in v2.5.0. deepMerge with the defaults normally
+          // supplies the object, but guard the container before writing into
+          // it so a stored value that somehow nulled it can't crash migration.
+          if (!cfg.tagRules || typeof cfg.tagRules !== "object") {
+            cfg.tagRules = { enabled: true, blacklist: [], rewrites: [] };
+          }
+          if (!Array.isArray(cfg.tagRules.blacklist)) cfg.tagRules.blacklist = [];
+          if (!Array.isArray(cfg.tagRules.rewrites)) cfg.tagRules.rewrites = [];
+        // eslint-disable-next-line no-fallthrough
+        case 4:
+          cfg.version++;
+          // Batch import arrives in v2.7.0.
+          if (!cfg.batchImport || typeof cfg.batchImport !== "object") {
+            cfg.batchImport = { enabled: true, concurrency: 1 };
           }
       }
 

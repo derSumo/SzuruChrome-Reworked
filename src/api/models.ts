@@ -7,6 +7,7 @@ export type TagFields = "version" | "names" | "category" | "usages" | "implicati
 export type PoolFields = "version" | "id" | "names" | "category" | "description" | "postCount" | "posts";
 
 export type TagsResult = PagedSearchResult<Tag>;
+export type PostsResult = PagedSearchResult<Post>;
 export type PoolsResult = PagedSearchResult<Pool>;
 export type TagCategoriesResult = UnpagedSearchResult<TagCategory>;
 

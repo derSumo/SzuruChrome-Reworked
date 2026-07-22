@@ -10,21 +10,30 @@ import {
   FetchCommandData,
   SzuruSiteConfig,
 } from "~/models";
-import { ImageSearchResult, PostAlreadyUploadedError, UpdatePoolRequest, UpdatePostRequest } from "~/api/models";
+import { ImageSearchResult, PostAlreadyUploadedError, UpdatePoolRequest, UpdatePostRequest, type Post } from "~/api/models";
 import SzurubooruApi from "~/api";
 import { guessMimeTypeFromUrl } from "~/utils";
+import { applyTagRulesToTagList, type TagRulesConfig } from "~/tagRules";
+import { getStats, recordImport, removeFailure, clearFailures, resetStats } from "~/stats";
+import {
+  loadSessionState,
+  saveSessionState,
+  startKeepAlive,
+  stopKeepAlive,
+  type ActiveImportEntry,
+  type ImportTask,
+  type SiteUploadState,
+} from "./sessionState";
+import { runBatchImport, type BatchImportRequest } from "./batch";
 
 const QUICK_IMPORT_MENU_ID = "szuru-quick-import-current-page";
 const DEFAULT_AUTO_RELATION_THRESHOLD = 60;
+const DEFAULT_MAX_ATTEMPTS = 3;
 
 // Per-site upload state used by the link-chain mode.
 // lastUploadedPostId  = most recent normal upload (seed for the next chain).
 // linkChain           = posts uploaded consecutively via hotkey_import_link_last.
 //                       A normal hotkey/context-menu/popup upload clears the chain.
-interface SiteUploadState {
-  lastUploadedPostId?: number;
-  linkChain: number[];
-}
 const siteStates = new Map<string, SiteUploadState>();
 
 function getSiteState(siteId: string): SiteUploadState {
@@ -38,17 +47,63 @@ function getSiteState(siteId: string): SiteUploadState {
 
 // Tracks in-flight and recently finished imports so content scripts that
 // load on the next page can restore toasts that were still visible.
-interface ActiveImportEntry {
-  tabId: number;
-  status: "running" | "progress" | "success" | "error";
-  progress?: number;
-  postId?: number;
-  postUrl?: string;
-  alreadyUploaded?: boolean;
-  message?: string;
-  queued?: boolean;
-}
 const activeImports = new Map<string, ActiveImportEntry>();
+let successfulImportCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+
+// ── State mirroring (MV3) ─────────────────────────────────────────────
+// Every mutation of the three long-lived maps goes through here so a worker
+// restart mid-burst can pick the queue back up. See ./sessionState.ts.
+function persistState() {
+  saveSessionState({
+    siteStates: Object.fromEntries(siteStates),
+    activeImports: Object.fromEntries(activeImports),
+    // The task currently uploading has already been shifted off the queue, so
+    // include it explicitly — otherwise a worker teardown mid-upload would
+    // drop exactly the one import that was in progress.
+    queue: activeQueueTask ? [activeQueueTask, ...importQueue] : [...importQueue],
+  });
+}
+
+let stateRestored: Promise<void> | undefined;
+
+function restoreState(): Promise<void> {
+  stateRestored ??= (async () => {
+    const state = await loadSessionState();
+    if (!state) return;
+
+    for (const [siteId, value] of Object.entries(state.siteStates)) {
+      if (!siteStates.has(siteId)) siteStates.set(siteId, value);
+    }
+    for (const [importId, entry] of Object.entries(state.activeImports)) {
+      if (!activeImports.has(importId)) activeImports.set(importId, entry);
+    }
+    // Tasks that were still queued when the worker died are resumed. Anything
+    // that was mid-upload is indistinguishable from a queued task here, so it
+    // re-runs; szurubooru's "already uploaded" handling makes that harmless.
+    for (const task of state.queue) {
+      if (importQueue.some((x) => x.importId === task.importId)) continue;
+      importQueue.push(task);
+      const pageUrl = getTaskPageUrl(task);
+      if (pageUrl) pendingPageUrls.add(pageUrl);
+    }
+    if (importQueue.length > 0) {
+      console.log(`Resuming ${importQueue.length} queued import(s) after worker restart.`);
+      void runQueue();
+    }
+  })();
+  return stateRestored;
+}
+
+function scheduleSuccessfulImportCleanup() {
+  if (successfulImportCleanupTimer) clearTimeout(successfulImportCleanupTimer);
+  successfulImportCleanupTimer = setTimeout(() => {
+    for (const [importId, entry] of activeImports) {
+      if (entry.status === "success") activeImports.delete(importId);
+    }
+    successfulImportCleanupTimer = undefined;
+    persistState();
+  }, 15_000);
+}
 
 // Derive the registrable (parent) domain from a host so we can build a
 // same-site Referer/Origin for hotlink-protected CDNs (e.g. an image host on a
@@ -134,6 +189,12 @@ type StoredConfig = {
   language?: string;
   autoRelationThreshold?: number;
   autoRelationsEnabled?: boolean;
+  replaceExactDuplicates?: boolean;
+  tagRules?: TagRulesConfig;
+  importedBadge?: { enabled?: boolean; showWhenNotImported?: boolean };
+  queueRetry?: { enabled?: boolean; maxAttempts?: number };
+  statsEnabled?: boolean;
+  batchImport?: { enabled?: boolean; concurrency?: number };
   sites: Array<{ id: string; domain: string; username: string; authToken: string }>;
 };
 
@@ -204,11 +265,11 @@ async function getActiveTabIdFallback() {
 }
 
 function sendQuickImportStatus(
-  tabId: number,
-  status: "running" | "success" | "error" | "progress",
-  data: { message?: string; postId?: number; postUrl?: string; progress?: number; alreadyUploaded?: boolean; importId?: string; queued?: boolean } = {},
+  tabId: number | undefined,
+  status: "running" | "success" | "error" | "progress" | "heartbeat",
+  data: { message?: string; postId?: number; postUrl?: string; progress?: number; speedBytesPerSecond?: number; totalBytes?: number; elapsedSeconds?: number; alreadyUploaded?: boolean; linkedPostIds?: number[]; duplicateOutcome?: "replaced" | "tags_merged"; importId?: string; queued?: boolean } = {},
 ) {
-  const { importId, progress, postId, postUrl, alreadyUploaded, message, queued } = data;
+  const { importId, progress, speedBytesPerSecond, totalBytes, postId, postUrl, alreadyUploaded, linkedPostIds, duplicateOutcome, message, queued } = data;
 
   // Keep activeImports in sync so new content scripts can restore toasts.
   if (importId) {
@@ -219,21 +280,45 @@ function sendQuickImportStatus(
       const entry = activeImports.get(importId);
       if (entry) {
         entry.progress = progress;
+        entry.speedBytesPerSecond = speedBytesPerSecond;
+        if (typeof totalBytes === "number" && totalBytes > 0) entry.totalBytes = totalBytes;
+        if (typeof speedBytesPerSecond === "number" && speedBytesPerSecond > 0) {
+          entry.lastDownloadSpeedBytesPerSecond = speedBytesPerSecond;
+        }
         entry.queued = false;
       } else {
-        activeImports.set(importId, { tabId, status: "progress", progress });
+        activeImports.set(importId, {
+          tabId,
+          status: "progress",
+          progress,
+          speedBytesPerSecond,
+          lastDownloadSpeedBytesPerSecond: speedBytesPerSecond,
+          totalBytes,
+        });
       }
-    } else if (status === "success" || status === "error") {
-      activeImports.set(importId, { tabId, status, postId, postUrl, alreadyUploaded, message });
-      // Held briefly so the active page's push handler has a chance to land
-      // even if it briefly disconnected, but the restore path no longer
-      // serves finished entries so the user never sees a duplicate "done"
-      // toast on navigation.
-      setTimeout(() => activeImports.delete(importId), 8000);
+    } else if (status === "success") {
+      const completedAt = Date.now();
+      activeImports.set(importId, { tabId, status, postId, postUrl, alreadyUploaded, linkedPostIds, duplicateOutcome, completedAt, message });
+      // The whole success history has one lifetime: every completed upload
+      // restarts it, so earlier rows do not disappear while a burst continues.
+      scheduleSuccessfulImportCleanup();
+    } else if (status === "error") {
+      activeImports.set(importId, { tabId, status, postId, postUrl, alreadyUploaded, linkedPostIds, duplicateOutcome, message });
+      setTimeout(() => {
+        activeImports.delete(importId);
+        persistState();
+      }, 8000);
     }
+    persistState();
   }
 
-  const payload = new BrowserCommand("quick_import_status", { status, ...data });
+  const completedAt = importId ? activeImports.get(importId)?.completedAt : undefined;
+  const lastDownloadSpeedBytesPerSecond = importId ? activeImports.get(importId)?.lastDownloadSpeedBytesPerSecond : undefined;
+  const storedTotalBytes = importId ? activeImports.get(importId)?.totalBytes : undefined;
+  const payload = new BrowserCommand("quick_import_status", { status, ...data, completedAt, lastDownloadSpeedBytesPerSecond, totalBytes: totalBytes ?? storedTotalBytes });
+  // Retries triggered from the options page have no originating tab; their
+  // result surfaces in the statistics tab instead of a toast.
+  if (typeof tabId !== "number") return Promise.resolve();
   return browser.tabs.sendMessage(tabId, payload).catch(async (ex) => {
     if (!isMissingContentScriptError(ex)) return;
 
@@ -326,6 +411,27 @@ async function grabPostsFromTab(tabId: number): Promise<any> {
   }
 }
 
+function scrapeHasPost(results: any): boolean {
+  return !!results?.results?.some((r: any) => Array.isArray(r?.posts) && r.posts.length > 0);
+}
+
+// A background tab reports "complete" before a throttled booru page has laid
+// out its content, so a single scrape can see an empty DOM. Retry a few times
+// until a post appears (or we give up and let the caller report the miss).
+async function grabPostsWithRetry(tabId: number, attempts = 5, delayMs = 500): Promise<any> {
+  let last: any;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      last = await grabPostsFromTab(tabId);
+    } catch {
+      last = undefined;
+    }
+    if (scrapeHasPost(last)) return last;
+    if (i < attempts - 1) await sleep(delayMs);
+  }
+  return last;
+}
+
 function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredConfig) {
   const name = scrapedPost?.name ?? "Post 1";
   const tags = (scrapedPost?.tags ?? [])
@@ -358,6 +464,9 @@ function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredCo
   };
 
   if (!cfg.addAllParsedTags) post.tags = [];
+  // Blacklist / rename rules run last, so they also catch tags the scraper
+  // added implicitly and stay consistent with the popup import path.
+  post.tags = applyTagRulesToTagList(post.tags, cfg.tagRules);
 
   const siteSpecificForce = isUploadAsContentSiteMatch(post.pageUrl, cfg.uploadAsContentSites);
   if ((cfg.alwaysUploadAsContent || siteSpecificForce) && post.name !== "[fallback] Upload as URL") {
@@ -376,7 +485,7 @@ function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredCo
   return post;
 }
 
-async function importCurrentPageInBackground(tabId: number, tabUrl?: string, importId?: string, preScrapedResults?: any) {
+async function importCurrentPageInBackground(tabId: number | undefined, tabUrl?: string, importId?: string, preScrapedResults?: any) {
   if (isRestrictedTabUrl(tabUrl)) {
     throw new Error(t("bg.restrictedPage"));
   }
@@ -391,7 +500,9 @@ async function importCurrentPageInBackground(tabId: number, tabUrl?: string, imp
   // so a navigation between queue enqueue and queue processing doesn't make
   // the task scrape the wrong page (which would then upload the same image
   // twice → "already uploaded" → blocks any meaningful subsequent imports).
-  const scrapeResults = preScrapedResults ?? await grabPostsFromTab(tabId);
+  // A retry launched from the options page has no tab to scrape; it always
+  // carries the payload captured when the original import failed.
+  const scrapeResults = preScrapedResults ?? (typeof tabId === "number" ? await grabPostsFromTab(tabId) : undefined);
   const firstResultWithPosts = scrapeResults?.results?.find((result: any) => Array.isArray(result.posts) && result.posts.length > 0);
 
   if (!firstResultWithPosts) {
@@ -417,6 +528,7 @@ async function importCurrentPageInBackground(tabId: number, tabUrl?: string, imp
   return {
     info,
     selectedSite,
+    alreadyUploaded: info.existingPostId === info.instancePostId,
   };
 }
 
@@ -489,7 +601,7 @@ async function tryAcquireContentToken(
   szuru: SzurubooruApi,
   data: PostUploadCommandData,
   onProgress?: (progress: number) => void,
-): Promise<string | undefined> {
+): Promise<{ token: string; fileSize?: number } | undefined> {
   const candidates = getCandidateContentUrls(data.post);
 
   // 1) Try content script fetch in page context (best chance against hotlink protection).
@@ -523,7 +635,7 @@ async function tryAcquireContentToken(
         // the upload to szurubooru completes (usually < 1s on a local network).
         onProgress?.(0.85);
         const tmpRes = await szuru.uploadTempFileFromBlob(blob, filename);
-        return tmpRes.token;
+        return { token: tmpRes.token, fileSize: blob.size };
       } catch (ex) {
         console.warn("Content script fetch/upload failed for candidate URL:", candidateUrl, ex);
       } finally {
@@ -541,7 +653,7 @@ async function tryAcquireContentToken(
     const importHost = beginImportHost(candidateUrl);
     try {
       const tmpRes = await szuru.uploadTempFile(candidateUrl, "content", data.post.referrer ?? data.post.pageUrl, onProgress);
-      return tmpRes.token;
+      return { token: tmpRes.token };
     } catch (ex) {
       console.warn("Background content fetch/upload failed for candidate URL:", candidateUrl, ex);
     } finally {
@@ -609,12 +721,14 @@ function recordNormalUpload(siteId: string, postId: number) {
   const state = getSiteState(siteId);
   state.lastUploadedPostId = postId;
   state.linkChain = [];
+  persistState();
 }
 
 function recordChainUpload(siteId: string, postId: number) {
   const state = getSiteState(siteId);
   state.linkChain.push(postId);
   state.lastUploadedPostId = postId;
+  persistState();
 }
 
 async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> {
@@ -648,7 +762,9 @@ async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> 
     let contentToken = data.post.instanceSpecificData[data.selectedSite.id]?.contentToken;
 
     if (!contentToken) {
-      contentToken = await tryAcquireContentToken(szuru, data, sendProgress);
+      const acquiredContent = await tryAcquireContentToken(szuru, data, sendProgress);
+      contentToken = acquiredContent?.token;
+      if (acquiredContent?.fileSize) data.post.contentSize = acquiredContent.fileSize;
 
       // Last chance before URL mode: prefer extraContentUrl if present, as many
       // booru pages expose CDN links that block server-side fetch while alt URLs work.
@@ -670,17 +786,30 @@ async function uploadPost(data: PostUploadCommandData): Promise<PostUploadInfo> 
       console.warn("Pre-upload reverse search failed (auto-relations):", getErrorMessage(ex));
     }
 
+    // Exact duplicates are not relations. Keep the higher-quality content on
+    // the existing post and merge newly discovered tags/sources into it.
+    const storedCfg = await readStoredConfig();
+    const exactDuplicate = storedCfg?.replaceExactDuplicates !== false && reverseSearchResult && getExactDuplicate(reverseSearchResult);
+    if (exactDuplicate) {
+      const duplicateInfo = await mergeExactDuplicate(szuru, data, exactDuplicate, contentToken);
+      Object.assign(info, duplicateInfo);
+      pushInfo();
+      return info;
+    }
+
     const createdPost = await szuru.createPost(data.post, contentToken);
 
     // Apply auto-relations from the stored reverse search results.
     if (reverseSearchResult) {
       try {
-        const storedCfg = await readStoredConfig();
         const autoRelationsEnabled = storedCfg?.autoRelationsEnabled !== false; // default true
         const threshold = storedCfg?.autoRelationThreshold ?? DEFAULT_AUTO_RELATION_THRESHOLD;
         if (autoRelationsEnabled) {
           const relationIds = getAutoRelationIds(reverseSearchResult, createdPost.id, threshold);
           await tryApplyAutoRelations(szuru, createdPost.id, createdPost.version, relationIds);
+          // Keep the successful automatic relation targets so the quick-import
+          // history can show the same links that were written to Szurubooru.
+          info.relatedPostIds = relationIds;
         }
       } catch (ex) {
         console.warn("Auto relation assignment failed:", getErrorMessage(ex));
@@ -826,37 +955,17 @@ async function executeFetch(data: FetchCommandData) {
 // they run one after another instead of racing. The chain bookkeeping for
 // hotkey_import_link_last must happen in the queue worker (not at enqueue
 // time) so the chain reflects the actual upload order.
-interface ImportTask {
-  kind: "normal" | "link_last";
-  tabId: number;
-  tabUrl?: string;
-  importId: string;
-  scrapeResults?: any;
-}
 const importQueue: ImportTask[] = [];
 let queueRunning = false;
+let activeQueueTask: ImportTask | undefined;
 
-// URLs already enqueued during the current hotkey burst. Cleared 3 s after
-// the queue goes idle so a deliberate re-upload later still works. Catches
-// the "URL changed but DOM still old" race on some boorus where two consecutive
-// hotkey presses end up scraping the same image.
-const burstPageUrls = new Set<string>();
-let burstClearTimer: ReturnType<typeof setTimeout> | undefined;
-
-function scheduleBurstClear() {
-  if (burstClearTimer) clearTimeout(burstClearTimer);
-  burstClearTimer = setTimeout(() => {
-    burstPageUrls.clear();
-    burstClearTimer = undefined;
-  }, 3000);
-}
-
-function cancelBurstClear() {
-  if (burstClearTimer) {
-    clearTimeout(burstClearTimer);
-    burstClearTimer = undefined;
-  }
-}
+// Page URLs of imports that are currently pending — i.e. still sitting in the
+// queue or actively uploading. A URL is removed as soon as its task settles, so
+// only a genuine double-fire of the *same* page while a copy is still in flight
+// is rejected. Distinct pages and deliberate re-imports of an already-finished
+// page are always allowed (szurubooru's own "already uploaded" handling is the
+// safety net there, surfaced as a success toast rather than a hard error).
+const pendingPageUrls = new Set<string>();
 
 function getTaskPageUrl(task: ImportTask): string | undefined {
   const post = task.scrapeResults?.results?.find((r: any) => Array.isArray(r?.posts) && r.posts.length > 0)?.posts?.[0];
@@ -865,54 +974,153 @@ function getTaskPageUrl(task: ImportTask): string | undefined {
 
 function enqueueImport(task: ImportTask) {
   const pageUrl = getTaskPageUrl(task);
-  if (pageUrl && burstPageUrls.has(pageUrl)) {
-    // Same page URL was already enqueued in this burst — the user fired the
-    // hotkey faster than the site swapped DOM, so this scrape is a copy of
-    // the previous one. Reject up-front instead of silently double-uploading.
+  if (pageUrl && pendingPageUrls.has(pageUrl)) {
+    // The exact same page is already queued/uploading — this is a redundant
+    // double-fire (e.g. the hotkey pressed twice on one page). Reject it so we
+    // don't create two posts of the same image in a race.
     void sendQuickImportStatus(task.tabId, "error", {
       importId: task.importId,
       message: t("bg.duplicateInBurst"),
     });
     return;
   }
-  if (pageUrl) burstPageUrls.add(pageUrl);
-  cancelBurstClear();
+  if (pageUrl) pendingPageUrls.add(pageUrl);
   importQueue.push(task);
+  persistState();
   void sendQuickImportStatus(task.tabId, "running", { importId: task.importId, queued: importQueue.length > 0 && queueRunning });
   void runQueue();
 }
 
+// Transient conditions worth another attempt: the network dropped, the CDN
+// rate-limited us, or szurubooru itself hiccuped. A rejected upload (bad
+// credentials, unsupported file, nothing to scrape) will fail identically on
+// every retry, so those go straight to the failure list.
+const RETRYABLE_PATTERNS = [
+  /network/i,
+  /timed? ?out/i,
+  /timeout/i,
+  /failed to fetch/i,
+  /econnreset/i,
+  /socket/i,
+  /temporarily/i,
+  /\bHTTP 4(08|29)\b/,
+  /\bHTTP 5\d\d\b/,
+];
+
+function isRetryableError(message: string): boolean {
+  return RETRYABLE_PATTERNS.some((re) => re.test(message));
+}
+
+async function getRetryConfig() {
+  const cfg = await readStoredConfig();
+  const enabled = cfg?.queueRetry?.enabled !== false;
+  const maxAttempts = Math.max(1, cfg?.queueRetry?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  return { enabled, maxAttempts, statsEnabled: cfg?.statsEnabled !== false };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function runQueue() {
   if (queueRunning) return;
   queueRunning = true;
+  // Uploads regularly outlive Chrome's 30s service-worker idle timeout.
+  startKeepAlive();
   try {
     while (importQueue.length > 0) {
       const task = importQueue.shift()!;
+      activeQueueTask = task;
+      persistState();
+      const pageUrl = getTaskPageUrl(task) ?? task.tabUrl;
       try {
         await processImportTask(task);
       } catch (ex) {
         const message = getErrorMessage(ex);
+        const attempts = (task.attempts ?? 0) + 1;
+        const { enabled, maxAttempts } = await getRetryConfig();
+
+        if (enabled && attempts < maxAttempts && isRetryableError(message)) {
+          // Exponential-ish backoff: 2s, 4s, 8s … capped so a long queue
+          // behind a flaky host still drains in reasonable time.
+          const delay = Math.min(2000 * 2 ** (attempts - 1), 15_000);
+          console.warn(`Queued import failed (attempt ${attempts}/${maxAttempts}), retrying in ${delay}ms:`, message);
+          await sendQuickImportStatus(task.tabId, "running", {
+            importId: task.importId,
+            queued: true,
+            message: t("bg.retrying", { attempt: attempts + 1, total: maxAttempts }),
+          });
+          await sleep(delay);
+          // Re-queue at the front so retries stay near their original position
+          // instead of landing behind an entire burst.
+          importQueue.unshift({ ...task, attempts });
+          persistState();
+          continue;
+        }
+
         console.error("Queued import failed:", message);
         await sendQuickImportStatus(task.tabId, "error", { message, importId: task.importId });
+        await recordFailure(task, message, attempts, pageUrl);
+      } finally {
+        const key = getTaskPageUrl(task);
+        // Keep the de-dupe lock while a retry is pending — the task is back in
+        // the queue and a fresh hotkey press for the same page is still a dupe.
+        if (key && !importQueue.some((x) => getTaskPageUrl(x) === key)) {
+          pendingPageUrls.delete(key);
+        }
+        activeQueueTask = undefined;
+        persistState();
       }
     }
   } finally {
     queueRunning = false;
-    // Burst ends when the queue is idle for a few seconds. Until then we
-    // keep rejecting same-URL duplicates so accidental double-fires don't
-    // upload the same image twice.
-    scheduleBurstClear();
+    stopKeepAlive();
+    persistState();
   }
+}
+
+async function recordFailure(task: ImportTask, message: string, attempts: number, pageUrl?: string) {
+  const { statsEnabled } = await getRetryConfig();
+  if (!statsEnabled) return;
+  const cfg = await readStoredConfig().catch(() => undefined);
+  await recordImport({
+    outcome: "error",
+    pageUrl,
+    siteId: cfg?.selectedSiteId,
+    failure: {
+      id: task.importId,
+      pageUrl,
+      siteId: cfg?.selectedSiteId,
+      message,
+      attempts,
+      // Storing the scrape lets the options page retry without the original
+      // tab still being open.
+      scrapeResults: task.scrapeResults,
+    },
+  }).catch((ex) => console.warn("Failed to record import failure:", ex));
 }
 
 async function processImportTask(task: ImportTask) {
   // Signal that this specific import has started its actual upload phase.
   await sendQuickImportStatus(task.tabId, "running", { importId: task.importId, queued: false });
+  const startedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const entry = activeImports.get(task.importId);
+    if (entry?.status === "success" || entry?.status === "error") return;
+    void sendQuickImportStatus(task.tabId, "heartbeat", {
+      importId: task.importId,
+      progress: entry?.progress,
+      speedBytesPerSecond: entry?.speedBytesPerSecond,
+      totalBytes: entry?.totalBytes,
+      elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
+    });
+  }, 1000);
+
+  try {
 
   const result = await importCurrentPageInBackground(task.tabId, task.tabUrl, task.importId, task.scrapeResults);
   const postId = result?.info?.instancePostId;
   const postUrl = postId ? `${result.selectedSite.domain.replace(/\/+$/, "")}/post/${postId}` : undefined;
   const siteId = result.selectedSite.id;
+  let linkedPostIds = result.info.relatedPostIds ? [...result.info.relatedPostIds] : undefined;
 
   if (postId) {
     if (task.kind === "link_last") {
@@ -926,6 +1134,7 @@ async function processImportTask(task: ImportTask) {
       if (targets.length > 0) {
         try {
           await tryLinkPostWithRelations(result.selectedSite, postId, targets);
+          linkedPostIds = [...new Set([...(linkedPostIds ?? []), ...targets])].filter((id) => id !== postId);
         } catch (ex) {
           console.warn("Chain relation linking failed:", getErrorMessage(ex));
         }
@@ -942,12 +1151,106 @@ async function processImportTask(task: ImportTask) {
     }
   }
 
+  // Read the transferred size before the success update replaces the entry.
+  const transferredBytes = activeImports.get(task.importId)?.totalBytes;
+
   await sendQuickImportStatus(task.tabId, "success", {
     postId,
     postUrl,
     alreadyUploaded: result.alreadyUploaded,
+    linkedPostIds,
+    duplicateOutcome: result.info.duplicateOutcome,
     importId: task.importId,
   });
+
+  // Prime the badge cache so returning to this page shows "imported"
+  // immediately instead of after the next lookup TTL.
+  const taskPageUrl = getTaskPageUrl(task) ?? task.tabUrl;
+  if (taskPageUrl && postId) {
+    cacheImportedCheck(taskPageUrl, { imported: true, postId, postUrl });
+  }
+
+  // A retry that finally succeeded should disappear from the failure list.
+  if (task.isRetry || (task.attempts ?? 0) > 0) {
+    await removeFailure(task.importId).catch(() => { });
+  }
+
+  const { statsEnabled } = await getRetryConfig();
+  if (statsEnabled) {
+    await recordImport({
+      outcome: result.alreadyUploaded ? "duplicate" : "success",
+      pageUrl: taskPageUrl,
+      siteId,
+      bytes: transferredBytes,
+      durationMs: Date.now() - startedAt,
+    }).catch((ex) => console.warn("Failed to record import stats:", ex));
+  }
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+function getExactDuplicate(searchResult: ImageSearchResult): Post | undefined {
+  return searchResult.exactPost ?? searchResult.similarPosts.find((result) => result.distance === 0)?.post;
+}
+
+function mergeDistinctLines(...values: Array<string | null | undefined>): string | null {
+  const lines = new Set<string>();
+  for (const value of values) {
+    for (const line of value?.split("\n") ?? []) {
+      const normalized = line.trim();
+      if (normalized) lines.add(normalized);
+    }
+  }
+  return lines.size ? [...lines].join("\n") : null;
+}
+
+function isIncomingContentBetter(post: Post, incoming: { resolution?: [number, number]; contentSize?: number }): boolean {
+  const [incomingWidth = 0, incomingHeight = 0] = incoming.resolution ?? [];
+  const incomingPixels = incomingWidth * incomingHeight;
+  const existingPixels = post.canvasWidth * post.canvasHeight;
+  if (incomingPixels !== existingPixels) return incomingPixels > existingPixels;
+
+  // For the same resolution, a larger file normally preserves more detail.
+  // Only compare it when the source provided an actual byte count.
+  if (typeof incoming.contentSize === "number" && incoming.contentSize > 0) {
+    return incoming.contentSize > post.fileSize;
+  }
+  return false;
+}
+
+async function mergeExactDuplicate(
+  szuru: SzurubooruApi,
+  data: PostUploadCommandData,
+  existing: Post,
+  contentToken?: string,
+): Promise<PostUploadInfo> {
+  const incomingTagNames = data.post.tags.map((tag: any) => tag.names?.[0]).filter((tag: unknown): tag is string => !!tag);
+  const mergedTags = [...new Set([...existing.tags.flatMap((tag) => tag.names), ...incomingTagNames])];
+  const mergedSource = mergeDistinctLines(existing.source, data.post.source);
+  const replaceContent = isIncomingContentBetter(existing, data.post);
+  const changedTags = mergedTags.length !== existing.tags.flatMap((tag) => tag.names).length;
+  const changedSource = mergedSource !== existing.source;
+
+  if (replaceContent || changedTags || changedSource) {
+    const update: UpdatePostRequest = {
+      version: existing.version,
+      tags: mergedTags,
+      source: mergedSource,
+    };
+    if (replaceContent) {
+      if (contentToken) update.contentToken = contentToken;
+      else update.contentUrl = data.post.contentUrl;
+    }
+    await szuru.updatePost(existing.id, update);
+  }
+
+  const info = new PostUploadInfo();
+  info.state = "uploaded";
+  info.instancePostId = existing.id;
+  info.existingPostId = existing.id;
+  info.duplicateOutcome = replaceContent ? "replaced" : "tags_merged";
+  return info;
 }
 
 async function scrapeNowOrUndefined(tabId: number) {
@@ -977,9 +1280,289 @@ async function handleHotkeyImportLinkLast(data: { url: string; importId?: string
   enqueueImport({ kind: "link_last", tabId, tabUrl: data.url, importId, scrapeResults });
 }
 
+// ── "Already imported" lookup ─────────────────────────────────────────
+// The content script asks once per page. We answer from a short-lived cache
+// so paging back and forth through a gallery doesn't hammer the instance.
+export interface ImportedCheckResult {
+  imported: boolean;
+  postId?: number;
+  postUrl?: string;
+  /** Set when the lookup itself failed — the badge stays hidden. */
+  unavailable?: boolean;
+}
+
+const IMPORTED_CHECK_TTL_MS = 5 * 60_000;
+const IMPORTED_CHECK_CACHE_MAX = 300;
+const importedCheckCache = new Map<string, { at: number; result: ImportedCheckResult }>();
+
+function cacheImportedCheck(pageUrl: string, result: ImportedCheckResult) {
+  importedCheckCache.set(pageUrl, { at: Date.now(), result });
+  // Map iterates in insertion order, so the head is always the oldest entry.
+  while (importedCheckCache.size > IMPORTED_CHECK_CACHE_MAX) {
+    const oldest = importedCheckCache.keys().next().value;
+    if (oldest === undefined) break;
+    importedCheckCache.delete(oldest);
+  }
+}
+
+// szurubooru parses ':' as a token separator, '-' as negation and '*' as a
+// wildcard; '\' escapes all of them. We escape the needle and add our own
+// wildcards afterwards.
+function escapeSzuruSearchValue(value: string) {
+  return value.replace(/([\\:*-])/g, "\\$1");
+}
+
+function normalizeSourceNeedle(pageUrl: string) {
+  return pageUrl
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+// The `source:*needle*` query matches substrings, so a page whose URL ends in
+// a short id (e.g. rule34's "…&id=12") would also match a stored post sourced
+// from "…&id=123". Re-check the candidate's actual source against a word
+// boundary after the needle so "id=12" no longer matches "id=123", while a
+// legitimate trailing slash / query separator / newline still counts.
+function sourceMatchesPage(source: string | null | undefined, needle: string): boolean {
+  if (!source) return false;
+  const haystack = source.toLowerCase();
+  let from = 0;
+  for (;;) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) return false;
+    const after = haystack[idx + needle.length];
+    // End of string, or a non-alphanumeric boundary → a genuine match.
+    if (after === undefined || !/[a-z0-9]/.test(after)) return true;
+    from = idx + 1;
+  }
+}
+
+async function checkImported(data: { pageUrl?: string; force?: boolean }): Promise<ImportedCheckResult> {
+  const pageUrl = data?.pageUrl;
+  if (!pageUrl) return { imported: false };
+
+  const cached = importedCheckCache.get(pageUrl);
+  if (!data.force && cached && Date.now() - cached.at < IMPORTED_CHECK_TTL_MS) {
+    return cached.result;
+  }
+
+  const cfg = await readStoredConfig();
+  if (!cfg || cfg.importedBadge?.enabled === false) return { imported: false, unavailable: true };
+  if (!cfg.sites?.length) return { imported: false, unavailable: true };
+
+  const site = resolveSelectedSite(cfg, pageUrl);
+  const szuru = new SzurubooruApi(site.domain, site.username, site.authToken);
+  const needle = normalizeSourceNeedle(pageUrl);
+  const query = `source:*${escapeSzuruSearchValue(needle)}*`;
+
+  try {
+    // Fetch a few candidates + their source: the substring query can return a
+    // post that merely shares a URL prefix, so we confirm on a word boundary.
+    const posts = await szuru.getPosts(query, 0, 5, ["id", "source"]);
+    const post = posts.results?.find((p) => sourceMatchesPage(p.source, needle));
+    const result: ImportedCheckResult = post
+      ? {
+          imported: true,
+          postId: post.id,
+          postUrl: `${site.domain.replace(/\/+$/, "")}/post/${post.id}`,
+        }
+      : { imported: false };
+    cacheImportedCheck(pageUrl, result);
+    return result;
+  } catch (ex) {
+    // A failed lookup must never surface as "not imported" — that would be a
+    // false negative inviting a duplicate upload. Report it as unavailable.
+    console.warn("Imported check failed:", getErrorMessage(ex));
+    return { imported: false, unavailable: true };
+  }
+}
+
+async function handleStatsMutate(data: { op?: string; id?: string }) {
+  switch (data.op) {
+    case "removeFailure":
+      if (data.id) await removeFailure(data.id);
+      return { ok: true };
+    case "clearFailures":
+      await clearFailures();
+      return { ok: true };
+    case "resetStats":
+      await resetStats();
+      return { ok: true };
+    default:
+      throw new Error(`Unknown stats op: ${data.op}`);
+  }
+}
+
+// Create the pool if absent, else append; ids stay in selection order and are
+// de-duplicated so re-running a batch doesn't add a post twice.
+async function assignPostsToPool(
+  site: { domain: string; username: string; authToken: string },
+  poolName: string,
+  postIds: number[],
+): Promise<{ poolId?: number; error?: string }> {
+  console.log(`[pool] assigning ${postIds.length} post(s) to pool "${poolName}"`, postIds);
+  try {
+    const szuru = new SzurubooruApi(site.domain, site.username, site.authToken);
+
+    // Look for an existing pool by exact name. A search that errors (e.g. the
+    // name trips szurubooru's query parser) must NOT abort the whole operation
+    // — fall through and create the pool, which is the common case anyway.
+    let existing: Awaited<ReturnType<typeof szuru.getPools>> | undefined;
+    try {
+      existing = await szuru.getPools(`name:${encodeTagName(poolName)}`, 0, 5, ["id", "names", "posts", "version"]);
+    } catch (searchEx) {
+      console.warn("[pool] search failed, will attempt to create instead:", getErrorMessage(searchEx));
+    }
+
+    const match = existing?.results?.find((p) => p.names?.some((n) => n.toLowerCase() === poolName.toLowerCase()));
+
+    if (!match) {
+      // `category` is required and must be an EXISTING pool category. Hardcoding
+      // "default" fails on instances whose pool category is named differently
+      // (that's why manual creation works but this didn't). Resolve the real
+      // default category, falling back to "default" only if the lookup fails.
+      let category = "default";
+      try {
+        const cats = (await szuru.getPoolCategories())?.results ?? [];
+        const chosen = cats.find((c) => c.default) ?? cats[0];
+        if (chosen?.name) category = chosen.name;
+      } catch (catEx) {
+        console.warn("[pool] could not read pool categories, using \"default\":", getErrorMessage(catEx));
+      }
+
+      // Create empty, then add posts via the proven updatePool path — some
+      // szurubooru versions validate a create-with-posts payload differently.
+      const created = await szuru.createPool(poolName, category);
+      console.log(`[pool] created pool #${created.id} "${poolName}" (category "${category}"), adding ${postIds.length} post(s)`);
+      if (postIds.length > 0) {
+        await szuru.updatePool(created.id, { version: created.version ?? 0, posts: postIds });
+      }
+      return { poolId: created.id };
+    }
+
+    const seen = new Set<number>();
+    const merged = [...match.posts.map((x) => x.id), ...postIds].filter((id) => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    await szuru.updatePool(match.id, { version: match.version, posts: merged });
+    console.log(`[pool] updated pool #${match.id} "${poolName}" → ${merged.length} post(s)`);
+    return { poolId: match.id };
+  } catch (ex) {
+    console.error("[pool] assignment failed:", getErrorMessage(ex));
+    return { error: getErrorMessage(ex) };
+  }
+}
+
+async function handleBatchImport(data: { urls?: string[]; poolName?: string; batchId?: string }, originTabId?: number) {
+  const urls = Array.isArray(data.urls) ? data.urls.filter((u) => typeof u === "string" && u) : [];
+  if (urls.length === 0) throw new Error(t("bg.batchNoUrls"));
+  const batchId = data.batchId ?? crypto.randomUUID();
+
+  const req: BatchImportRequest = {
+    urls,
+    poolName: data.poolName?.trim() || undefined,
+    originTabId,
+    batchId,
+  };
+  console.log(`[batch] ${urls.length} url(s), pool: ${req.poolName ?? "(none)"}`);
+
+  // Resolve the pool's target instance once (pool mode targets the selected
+  // instance even if individual posts host-map elsewhere).
+  const cfgForPool = req.poolName ? await readStoredConfig() : undefined;
+  const poolSite = cfgForPool ? resolveSelectedSite(cfgForPool, undefined) : undefined;
+
+  // A batch of tab-loads + uploads easily outlives Chrome's 30s service-worker
+  // idle timeout, so hold the worker open for its duration (the plain queue
+  // does the same). Stop only if the regular queue isn't also relying on it.
+  startKeepAlive();
+
+  // Fire-and-forget: the runner streams progress to the origin tab via
+  // batch_status, so we don't block the message channel on the whole batch.
+  // Success stats are recorded inline (once per item); failures are recorded
+  // afterwards from the result list so per-attempt retries don't double-count.
+  void runBatchImport(req, {
+    concurrency: async () => {
+      const cfg = await readStoredConfig();
+      return cfg?.batchImport?.concurrency ?? 1;
+    },
+    importUrlInTab: async (url, tabId) => {
+      const startedAt = Date.now();
+      // Scrape with retries here (not inside importCurrentPageInBackground) so
+      // a throttled background tab that isn't laid out yet gets another chance
+      // instead of failing the item outright.
+      const scrapeResults = await grabPostsWithRetry(tabId);
+      const result = await importCurrentPageInBackground(tabId, url, crypto.randomUUID(), scrapeResults);
+      const postId = result.info.instancePostId;
+      const { statsEnabled } = await getRetryConfig();
+      if (statsEnabled) {
+        await recordImport({
+          outcome: result.alreadyUploaded ? "duplicate" : "success",
+          pageUrl: url,
+          siteId: result.selectedSite.id,
+          durationMs: Date.now() - startedAt,
+        }).catch(() => { });
+      }
+      if (postId && url) cacheImportedCheck(url, { imported: true, postId });
+      return { postId, alreadyUploaded: result.alreadyUploaded };
+    },
+    assignPool: async (poolName, postIds) => {
+      if (!poolSite) return { error: t("bg.noInstances") };
+      return assignPostsToPool(poolSite, poolName, postIds);
+    },
+  })
+    .then(async (results) => {
+      const { statsEnabled } = await getRetryConfig();
+      if (!statsEnabled) return;
+      const cfg = await readStoredConfig().catch(() => undefined);
+      for (const r of results.filter((x) => x.error)) {
+        await recordImport({
+          outcome: "error",
+          pageUrl: r.url,
+          siteId: cfg?.selectedSiteId,
+          failure: { id: crypto.randomUUID(), pageUrl: r.url, siteId: cfg?.selectedSiteId, message: r.error ?? "Unknown error", attempts: 1 },
+        }).catch(() => { });
+      }
+    })
+    .catch((ex) => console.error("Batch import failed:", getErrorMessage(ex)))
+    .finally(() => { if (!queueRunning) stopKeepAlive(); });
+
+  return { batchId, accepted: urls.length };
+}
+
+async function retryFailedImport(data: { id?: string }) {
+  if (!data?.id) throw new Error("Missing failure id");
+  const stats = await getStats();
+  const failure = stats.failures.find((f) => f.id === data.id);
+  if (!failure) throw new Error(t("bg.retryNotFound"));
+  if (!failure.scrapeResults) throw new Error(t("bg.retryNoPayload"));
+
+  // Drop it from the list up front: either the retry succeeds, or it fails
+  // again and gets re-recorded with a fresh attempt count.
+  await removeFailure(failure.id);
+
+  enqueueImport({
+    kind: "normal",
+    tabId: undefined,
+    tabUrl: failure.pageUrl,
+    importId: crypto.randomUUID(),
+    scrapeResults: failure.scrapeResults,
+    isRetry: true,
+  });
+
+  return { queued: true };
+}
+
 async function messageHandler(cmd: BrowserCommand, sender: any): Promise<any> {
   console.log("Background received message:");
   console.dir(cmd);
+
+  // Restoring first means a message arriving on a freshly-revived MV3 worker
+  // still sees the link chain and queue from before it was torn down.
+  await restoreState();
 
   switch (cmd.name) {
     case "upload_post":
@@ -996,20 +1579,46 @@ async function messageHandler(cmd: BrowserCommand, sender: any): Promise<any> {
       const tabId = sender?.tab?.id;
       const result: Array<ActiveImportEntry & { importId: string }> = [];
       if (typeof tabId !== "number") return result;
+      const returnedImportIds = new Set<string>();
       for (const [importId, entry] of activeImports) {
         if (entry.tabId !== tabId) continue;
-        // Only restore still-in-progress imports. Finished states are
-        // delivered actively via sendQuickImportStatus to the current page,
-        // so replaying them here would only create duplicate toasts on
-        // rapid back/forward navigation.
-        if (entry.status === "success" || entry.status === "error") continue;
+        // Successful imports rebuild the compact history menu after a page
+        // change. Errors remain transient and should not reappear on a later
+        // page just because they are still in the short retention window.
+        if (entry.status === "error") continue;
         result.push({ importId, ...entry });
+        returnedImportIds.add(importId);
+      }
+
+      // The queue itself is the source of truth for work that still exists.
+      // Include it in restoration as well so a content script loaded during a
+      // rapid navigation never briefly sees only the active task because one
+      // of the earlier queued status broadcasts was missed.
+      if (activeQueueTask?.tabId === tabId && !returnedImportIds.has(activeQueueTask.importId)) {
+        result.push({ importId: activeQueueTask.importId, tabId, status: "running", queued: false });
+        returnedImportIds.add(activeQueueTask.importId);
+      }
+      for (const task of importQueue) {
+        if (task.tabId !== tabId || returnedImportIds.has(task.importId)) continue;
+        result.push({ importId: task.importId, tabId, status: "running", queued: true });
+        returnedImportIds.add(task.importId);
       }
       return result;
     }
+    case "check_imported":
+      return checkImported(cmd.data ?? {});
+    case "retry_failed_import":
+      return retryFailedImport(cmd.data ?? {});
+    case "batch_import":
+      return handleBatchImport(cmd.data ?? {}, sender?.tab?.id);
+    case "stats_mutate":
+      // The options page delegates every stats write here so all writers share
+      // the background's serialised chain (see stats.ts). Reads still happen
+      // directly in the options context — only mutations must funnel through.
+      return handleStatsMutate(cmd.data ?? {});
     case "report_progress": {
       const tabId = sender?.tab?.id;
-      if (tabId) sendQuickImportStatus(tabId, "progress", { progress: cmd.data.progress, importId: cmd.data.importId });
+      if (tabId) sendQuickImportStatus(tabId, "progress", { progress: cmd.data.progress, speedBytesPerSecond: cmd.data.speedBytesPerSecond, totalBytes: cmd.data.totalBytes, importId: cmd.data.importId });
       return;
     }
   }
@@ -1101,6 +1710,10 @@ if ((browser as any).webRequest?.onBeforeSendHeaders) {
     }
   }
 }
+
+// Pick the queue and link-chain back up if the MV3 worker was torn down
+// while imports were still pending.
+void restoreState();
 
 // Also initialize on worker start; install/startup listeners may not fire on every restart.
 void setupContextMenu().catch((ex) => {

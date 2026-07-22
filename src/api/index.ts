@@ -2,6 +2,7 @@ import axios, { AxiosRequestConfig, CancelToken } from "axios";
 import { isEqual } from "lodash";
 import {
   TagsResult,
+  PostsResult,
   TagCategoriesResult,
   Post,
   Tag,
@@ -56,6 +57,16 @@ export default class SzurubooruApi {
     return (await this.apiGet("post/" + id)).data;
   }
 
+  async getPosts(query: string, offset = 0, limit = 10, fields?: string[]): Promise<PostsResult> {
+    const params = new URLSearchParams();
+    params.append("offset", offset.toString());
+    params.append("limit", limit.toString());
+    if (fields && fields.length > 0) params.append("fields", fields.join());
+    if (query) params.append("query", query);
+
+    return (await this.apiGet("posts?" + params.toString())).data;
+  }
+
   async updateTag(tag: Tag): Promise<any> {
     return (await this.apiPut("tag/" + encodeURIComponent(tag.names[0]), tag)).data;
   }
@@ -83,6 +94,10 @@ export default class SzurubooruApi {
 
   async getTagCategories(): Promise<TagCategoriesResult> {
     return (await this.apiGet("tag-categories")).data;
+  }
+
+  async getPoolCategories(): Promise<{ results: Array<{ name: string; default?: boolean }> }> {
+    return (await this.apiGet("pool-categories")).data;
   }
 
   async createPost(post: ScrapedPostDetails, contentToken?: string): Promise<Post> {

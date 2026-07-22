@@ -54,6 +54,10 @@ export class InstanceSpecificData {
   genericError?: string;
   reverseSearchResult?: SimpleImageSearchResult;
   uploadState?: PostUploadInfo;
+  // Tags harvested from visually similar posts during the reverse search,
+  // offered as one-click suggestions in the popup. Ranked by how many similar
+  // posts carry them.
+  suggestedTags?: TagDetails[];
 }
 
 type MappedInstanceSpecificData = {
@@ -119,6 +123,8 @@ export class PostUploadInfo {
   error?: string;
   instancePostId?: number;
   existingPostId?: number;
+  relatedPostIds?: number[];
+  duplicateOutcome?: "replaced" | "tags_merged";
   updateTagsState?: {
     total: number;
     current?: number;
@@ -140,7 +146,12 @@ export type BrowserCommandName =
   | "hotkey_import"
   | "hotkey_import_link_last"
   | "get_active_imports"
-  | "report_progress";
+  | "report_progress"
+  | "check_imported"
+  | "retry_failed_import"
+  | "stats_mutate"
+  | "batch_import"
+  | "batch_status";
 
 export class BrowserCommand<T = any> {
   name: BrowserCommandName;
