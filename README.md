@@ -78,10 +78,13 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 
 ### Chrome / Brave / Edge
 
-1. Build the Chrome target: `npm run build:chrome`
-2. Open `chrome://extensions/`
-3. Enable **Developer mode**
-4. Click **Load unpacked** and select the `extension/` folder
+1. Download the extension ZIP from the [Releases](../../releases) tab
+2. Extract the ZIP anywhere (you'll get a folder containing `manifest.json`)
+3. Open `chrome://extensions/`
+4. Enable **Developer mode** (toggle in the top-right)
+5. Click **Load unpacked** and select the extracted folder
+
+> Chrome has no signed store build yet, so it's loaded unpacked — Developer mode has to stay enabled. Want to build it yourself instead? See [Build](#build).
 
 ## Build
 
@@ -193,10 +196,13 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 
 ### Chrome / Brave / Edge
 
-1. Chrome-Target bauen: `npm run build:chrome`
-2. `chrome://extensions/` öffnen
-3. **Entwicklermodus** aktivieren
-4. **Entpackte Erweiterung laden** klicken und den `extension/`-Ordner auswählen
+1. Das Extension-ZIP aus dem [Releases](../../releases)-Tab herunterladen
+2. Das ZIP irgendwohin entpacken (du erhältst einen Ordner mit `manifest.json`)
+3. `chrome://extensions/` öffnen
+4. **Entwicklermodus** aktivieren (Schalter oben rechts)
+5. **Entpackte Erweiterung laden** klicken und den entpackten Ordner auswählen
+
+> Für Chrome gibt es noch keinen signierten Store-Build, daher wird er entpackt geladen — der Entwicklermodus muss aktiviert bleiben. Lieber selbst bauen? Siehe [Build](#build).
 
 ## Build
 
