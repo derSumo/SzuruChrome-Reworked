@@ -50,11 +50,21 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 
 ## Screenshots
 
-| Popup | Settings — General |
+**Popup on a booru page**
+
+![Popup](./docs/screenshots/popup.png)
+
+**Batch import — select posts on a listing page**
+
+![Batch import](./docs/screenshots/batch-import.jpg)
+
+| Settings — General (tag rules) | Settings — Statistics |
 |---|---|
-| ![Popup](./docs/screenshots/popup.png) | ![General](./docs/screenshots/options-general.png) |
-| **Settings — Interface** | **Settings — Tags** |
-| ![Interface](./docs/screenshots/options-interface.png) | ![Tags](./docs/screenshots/options-tags.png) |
+| ![General](./docs/screenshots/settings-general.png) | ![Statistics](./docs/screenshots/settings-statistics.png) |
+| **Settings — Interface (backup)** | **Settings — Tags** |
+| ![Interface](./docs/screenshots/settings-interface.png) | ![Tags](./docs/screenshots/settings-tags.png) |
+| **Settings — Instances** | **Settings — Changelog** |
+| ![Instances](./docs/screenshots/settings-instances.png) | ![Changelog](./docs/screenshots/settings-changelog.png) |
 
 ## Installation
 
@@ -155,11 +165,21 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 
 ## Screenshots
 
-| Popup | Einstellungen — Allgemein |
+**Popup auf einer Booru-Seite**
+
+![Popup](./docs/screenshots/popup.png)
+
+**Batch-Import — Posts auf einer Listen-Seite auswählen**
+
+![Batch-Import](./docs/screenshots/batch-import.jpg)
+
+| Einstellungen — Allgemein (Tag-Regeln) | Einstellungen — Statistik |
 |---|---|
-| ![Popup](./docs/screenshots/popup.png) | ![Allgemein](./docs/screenshots/options-general.png) |
-| **Einstellungen — Oberfläche** | **Einstellungen — Tags** |
-| ![Oberfläche](./docs/screenshots/options-interface.png) | ![Tags](./docs/screenshots/options-tags.png) |
+| ![Allgemein](./docs/screenshots/settings-general.png) | ![Statistik](./docs/screenshots/settings-statistics.png) |
+| **Einstellungen — Oberfläche (Backup)** | **Einstellungen — Tags** |
+| ![Oberfläche](./docs/screenshots/settings-interface.png) | ![Tags](./docs/screenshots/settings-tags.png) |
+| **Einstellungen — Instanzen** | **Einstellungen — Changelog** |
+| ![Instanzen](./docs/screenshots/settings-instances.png) | ![Changelog](./docs/screenshots/settings-changelog.png) |
 
 ## Installation
 
