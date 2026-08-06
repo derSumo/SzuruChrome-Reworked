@@ -141,6 +141,18 @@ function clearMarks(): void {
   }
 }
 
+/**
+ * A navigation/config refresh invalidates any in-flight answer. Its old
+ * thumbnails must be eligible for the fresh observer again; otherwise their
+ * spinner and `seen` marker outlive the discarded request indefinitely.
+ */
+function clearPendingMarks(): void {
+  for (const anchor of Array.from(document.querySelectorAll<HTMLAnchorElement>(`.${PENDING_CLASS}`))) {
+    anchor.classList.remove(PENDING_CLASS);
+    anchor.removeAttribute(SEEN_ATTR);
+  }
+}
+
 function rememberAnchor(url: string, anchor: HTMLAnchorElement): void {
   let anchors = knownAnchors.get(url);
   if (!anchors) { anchors = new Set(); knownAnchors.set(url, anchors); }
@@ -308,6 +320,7 @@ async function refresh(): Promise<void> {
   pendingUrls.clear();
   watchedAnchors.clear();
   knownAnchors.clear();
+  clearPendingMarks();
   // A virtual navigation replaces thumbnails without unloading this script.
   // Disconnecting drops the old element references before scanning the new DOM.
   observer?.disconnect();
