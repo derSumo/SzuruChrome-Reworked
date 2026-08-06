@@ -57,6 +57,8 @@ let installed = false;
 let enabled = false;
 let generation = 0;
 let loadController: AbortController | undefined;
+let continuationQueued = false;
+let sentinelState: "ready" | "loading" | "end" | "error" = "ready";
 
 /** URLs already on the page, so an overlapping next page adds nothing twice. */
 const seenPosts = new Set<string>();
@@ -105,6 +107,7 @@ function retry(): void {
 
 function setSentinel(state: "ready" | "loading" | "end" | "error"): void {
   if (!sentinel) return;
+  sentinelState = state;
   sentinel.classList.toggle("is-end", state === "end");
   sentinel.classList.toggle("is-error", state === "error");
   sentinel.replaceChildren();
@@ -134,6 +137,24 @@ function setSentinel(state: "ready" | "loading" | "end" | "error"): void {
     }
   }
   sentinel.appendChild(label);
+}
+
+/**
+ * IntersectionObserver only reports a threshold transition. If it fired while
+ * a page was still loading, the sentinel can remain in view afterwards without
+ * another callback — which used to leave the loader looking idle forever.
+ */
+function continueWhileNear(): void {
+  if (continuationQueued || loading || sentinelState !== "ready" || !nextUrl || !sentinel) return;
+  continuationQueued = true;
+  requestAnimationFrame(() => {
+    continuationQueued = false;
+    if (loading || sentinelState !== "ready" || !nextUrl || !sentinel?.isConnected) return;
+    const bounds = sentinel.getBoundingClientRect();
+    const margin = Number.parseInt(PREFETCH_MARGIN, 10) || 0;
+    const closeEnough = bounds.top <= window.innerHeight + margin && bounds.bottom >= -margin;
+    if (closeEnough) void loadNextPage();
+  });
 }
 
 function stop(state: "end" | "error"): void {
@@ -218,7 +239,10 @@ async function loadNextPage(): Promise<void> {
   } finally {
     clearTimeout(timeout);
     if (loadController === controller) loadController = undefined;
-    if (loadGeneration === generation) loading = false;
+    if (loadGeneration === generation) {
+      loading = false;
+      continueWhileNear();
+    }
   }
 }
 
@@ -251,6 +275,7 @@ async function refresh(): Promise<void> {
   seenPosts.clear();
   pagesLoaded = 0;
   loading = false;
+  continuationQueued = false;
 
   const listing = await getListingSettings();
   enabled = listing.endlessScroll;
@@ -273,7 +298,9 @@ async function refresh(): Promise<void> {
   setSentinel("ready");
 
   observer = new IntersectionObserver((entries) => {
-    if (entries.some((e) => e.isIntersecting)) void loadNextPage();
+    const entry = entries.find((e) => e.target === sentinel);
+    if (!entry) return;
+    if (entry.isIntersecting) void loadNextPage();
   }, { rootMargin: PREFETCH_MARGIN });
   observer.observe(sentinel);
 }

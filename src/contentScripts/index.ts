@@ -19,7 +19,7 @@ import { setLanguage, type Language } from "~/i18n";
 import { handleBatchStatus, installBatchUi } from "./batchUi";
 import { fetchContent, fetchHeadInfo } from "./fetchContent";
 import { installImportedBadge, updateImportedBadge } from "./importedBadge";
-import { installThumbBadges, invalidateThumbBadges } from "./thumbBadges";
+import { installThumbBadges, invalidateThumbBadges, markThumbnailImported } from "./thumbBadges";
 import { installThumbActions } from "./thumbActions";
 import { getConfig, getListingSettings, onConfigReloaded } from "./pageConfig";
 import { grabPost } from "./scraper";
@@ -51,6 +51,12 @@ import { onBfcacheRestore } from "./navigation";
         return;
       case "batch_status":
         handleBatchStatus(cmd.data);
+        // Batch work happens in background tabs, so it does not emit the
+        // listing's regular quick-import toast. Its per-item progress is the
+        // moment to update the matching thumbnail in real time.
+        if (cmd.data?.phase === "progress" && cmd.data.lastUrl && cmd.data.lastPostId) {
+          markThumbnailImported(cmd.data.lastUrl);
+        }
         return;
     }
   }

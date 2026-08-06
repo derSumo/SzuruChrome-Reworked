@@ -34,6 +34,8 @@ const BULK_DEBOUNCE_MS = 250;
 const PREFETCH_MARGIN = "300px";
 /** Ceiling per message, matching what the background is willing to chunk. */
 const MAX_URLS_PER_REQUEST = 60;
+/** Enough for several visible/infinite-scroll pages, without retaining a huge grid. */
+const KNOWN_ANCHOR_URLS_MAX = 500;
 
 const THUMB_STYLES = `
   .${MARK_CLASS},.${PENDING_CLASS}{position:relative}
@@ -71,6 +73,12 @@ const resolved = new Map<string, boolean>();
 const pendingUrls = new Set<string>();
 /** Anchors waiting for their answer, keyed by the URL they point at. */
 const watchedAnchors = new Map<string, Set<HTMLAnchorElement>>();
+/**
+ * Thumbnails already encountered on this listing. This bounded, in-document
+ * index lets a batch success update its tile without re-scanning the full
+ * endless-scrolling page for every completed item.
+ */
+const knownAnchors = new Map<string, Set<HTMLAnchorElement>>();
 
 let observer: IntersectionObserver | undefined;
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -133,8 +141,23 @@ function clearMarks(): void {
   }
 }
 
+function rememberAnchor(url: string, anchor: HTMLAnchorElement): void {
+  let anchors = knownAnchors.get(url);
+  if (!anchors) { anchors = new Set(); knownAnchors.set(url, anchors); }
+  anchors.add(anchor);
+  while (knownAnchors.size > KNOWN_ANCHOR_URLS_MAX) {
+    const oldest = knownAnchors.keys().next().value;
+    if (!oldest) break;
+    knownAnchors.delete(oldest);
+  }
+}
+
+function anchorsFor(url: string): Set<HTMLAnchorElement> {
+  return new Set([...(knownAnchors.get(url) ?? []), ...(watchedAnchors.get(url) ?? [])]);
+}
+
 function applyResult(url: string, result: { imported: boolean; postUrl?: string; unavailable?: boolean }): void {
-  const anchors = watchedAnchors.get(url) ?? [];
+  const anchors = anchorsFor(url);
 
   // `unavailable` means the lookup itself failed. Stop the spinner and forget
   // the thumbnail entirely — dropping the "seen" mark puts it back in line for
@@ -237,6 +260,7 @@ function scanThumbnails(root: ParentNode = document): number {
     if (!anchor.querySelector("img")) continue;
     const url = normalizePostUrl(anchor.href, window.location.href);
     if (!url) continue;
+    rememberAnchor(url, anchor);
     // Already handled — unless the site recycled the node for another post.
     if (anchor.getAttribute(SEEN_ATTR) === url) continue;
     anchor.setAttribute(SEEN_ATTR, url);
@@ -283,6 +307,7 @@ async function refresh(): Promise<void> {
   flushTimer = undefined;
   pendingUrls.clear();
   watchedAnchors.clear();
+  knownAnchors.clear();
   // A virtual navigation replaces thumbnails without unloading this script.
   // Disconnecting drops the old element references before scanning the new DOM.
   observer?.disconnect();
@@ -324,4 +349,15 @@ export function invalidateThumbBadges(): void {
   resolved.clear();
   clearMarks();
   void refresh();
+}
+
+/** Mark one just-finished batch item without waiting for another bulk lookup. */
+export function markThumbnailImported(pageUrl: string): void {
+  if (!enabled || !pageUrl) return;
+  resolved.set(pageUrl, true);
+  pendingUrls.delete(pageUrl);
+  for (const anchor of anchorsFor(pageUrl)) {
+    if (anchor.isConnected) markAnchor(anchor);
+  }
+  watchedAnchors.delete(pageUrl);
 }
