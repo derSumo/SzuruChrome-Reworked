@@ -539,6 +539,10 @@ function selectRangeTo(anchor: HTMLAnchorElement): void {
 }
 
 const onSelectClick = (e: MouseEvent) => {
+  // The per-thumbnail import buttons live inside the same anchor. Their click
+  // reaches document in the capture phase before the action bar can stop it,
+  // so never reinterpret it as a batch-selection click.
+  if ((e.target as HTMLElement)?.closest?.("#szuru-thumb-actions")) return;
   const anchor = (e.target as HTMLElement)?.closest?.("a");
   if (!anchor || !anchor.classList.contains(SELECTABLE_CLASS)) return;
   e.preventDefault();

@@ -114,9 +114,11 @@ function showBar(anchor: HTMLAnchorElement, url: string): void {
     <button class="sza-link" type="button" title="${escapeAttr(t("batch.hoverLink") || "Import and link to the previous one")}">${icon("link", 16)}</button>
   `;
   // The bar sits on top of the thumbnail's own link: a click here must not
-  // navigate to the post, and must not reach the batch picker either.
+  // navigate to the post. This must happen while bubbling: a capture handler
+  // on the bar runs before its button target and would swallow the import
+  // button's own click listener.
   for (const event of ["click", "mousedown", "mouseup"] as const) {
-    bar.addEventListener(event, (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+    bar.addEventListener(event, (e) => { e.preventDefault(); e.stopPropagation(); });
   }
   bar.querySelector(".sza-import")?.addEventListener("click", () => void runImport(bar, url, false));
   bar.querySelector(".sza-link")?.addEventListener("click", () => void runImport(bar, url, true));
