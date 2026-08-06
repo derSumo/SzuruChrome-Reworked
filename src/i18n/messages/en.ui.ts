@@ -299,6 +299,12 @@ export default {
   // ── Changelog ─────────────────────────────────────────
   "changelog.title": "Changelog",
 
+  "changelog.v301.date": "August 2026",
+  "changelog.v301.listingFlow": "More reliable, transparent listing imports",
+  "changelog.v301.listingFlowDesc": "Endless scroll continues reliably after an active request, clearly reports its safety limit, and thumbnail import buttons respond again.",
+  "changelog.v301.liveState": "Live status on the tile",
+  "changelog.v301.liveStateDesc": "A successful batch marks its thumbnail immediately. Stale check spinners are reset and retried after navigation or refresh, while failures appear during the batch instead of only at the end.",
+
   "changelog.v300.date": "August 2026",
   "changelog.v300.hoverActions": "Import buttons on every thumbnail",
   "changelog.v300.hoverActionsDesc": "Hover a thumbnail on a listing page and two buttons appear: import this post, or import it and link it to your previous import as a relation. The post is loaded, scraped and uploaded in the background — you never leave the listing.",

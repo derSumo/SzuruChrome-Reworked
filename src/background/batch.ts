@@ -148,6 +148,10 @@ function skippedCount(session: BatchSession): number {
   return session.ordered.reduce((n, r) => n + (r?.skipped ? 1 : 0), 0);
 }
 
+function failedCount(session: BatchSession): number {
+  return session.ordered.reduce((n, r) => n + (r?.error ? 1 : 0), 0);
+}
+
 // ── Surviving a service-worker teardown ───────────────────────────────
 // A batch runs for minutes; the MV3 worker is not guaranteed to live that long
 // (a crash, an extension update, or the keep-alive losing a race). Everything
@@ -299,6 +303,7 @@ async function runWorker(session: BatchSession): Promise<void> {
       done: session.done,
       total: session.queue.length,
       skipped: skippedCount(session),
+      failed: failedCount(session),
       poolName: session.poolName,
       lastUrl: url,
       lastPostId: result.postId,
@@ -402,6 +407,7 @@ export async function runBatchImport(req: BatchImportRequest, hooks: BatchRunner
       done: session.done,
       total: session.queue.length,
       skipped: skippedCount(session),
+      failed: failedCount(session),
       poolName: session.poolName,
       accepted,
       duplicates,

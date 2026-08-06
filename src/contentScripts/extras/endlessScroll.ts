@@ -58,7 +58,7 @@ let enabled = false;
 let generation = 0;
 let loadController: AbortController | undefined;
 let continuationQueued = false;
-let sentinelState: "ready" | "loading" | "end" | "error" = "ready";
+let sentinelState: "ready" | "loading" | "end" | "limit" | "error" = "ready";
 
 /** URLs already on the page, so an overlapping next page adds nothing twice. */
 const seenPosts = new Set<string>();
@@ -95,7 +95,7 @@ function findGrid(root: Document, pageUrl: string): HTMLElement | undefined {
   return undefined;
 }
 
-function sentinelText(key: "batch.moreLoading" | "batch.moreReady" | "batch.moreEnd" | "batch.moreFailed", fallback: string): string {
+function sentinelText(key: "batch.moreLoading" | "batch.moreReady" | "batch.moreEnd" | "batch.moreFailed" | "batch.moreLimit", fallback: string): string {
   return t(key, { pages: pagesLoaded, page: pagesLoaded + 1, posts: seenPosts.size }) || fallback;
 }
 
@@ -105,10 +105,10 @@ function retry(): void {
   void loadNextPage();
 }
 
-function setSentinel(state: "ready" | "loading" | "end" | "error"): void {
+function setSentinel(state: "ready" | "loading" | "end" | "limit" | "error"): void {
   if (!sentinel) return;
   sentinelState = state;
-  sentinel.classList.toggle("is-end", state === "end");
+  sentinel.classList.toggle("is-end", state === "end" || state === "limit");
   sentinel.classList.toggle("is-error", state === "error");
   sentinel.replaceChildren();
 
@@ -124,6 +124,9 @@ function setSentinel(state: "ready" | "loading" | "end" | "error"): void {
       break;
     case "end":
       label.textContent = sentinelText("batch.moreEnd", `End of the listing · ${seenPosts.size} posts loaded`);
+      break;
+    case "limit":
+      label.textContent = sentinelText("batch.moreLimit", `${pagesLoaded} pages loaded · safety limit reached`);
       break;
     case "error": {
       label.textContent = sentinelText("batch.moreFailed", "Could not load the next page");
@@ -157,16 +160,16 @@ function continueWhileNear(): void {
   });
 }
 
-function stop(state: "end" | "error"): void {
+function stop(state: "end" | "limit" | "error"): void {
   observer?.disconnect();
   setSentinel(state);
   // An error can be retried without making the user reload the whole listing.
-  if (state === "end") nextUrl = undefined;
+  if (state !== "error") nextUrl = undefined;
 }
 
 async function loadNextPage(): Promise<void> {
   if (loading || !nextUrl || !container) return;
-  if (pagesLoaded >= MAX_PAGES) { stop("end"); return; }
+  if (pagesLoaded >= MAX_PAGES) { stop("limit"); return; }
 
   loading = true;
   const loadGeneration = generation;

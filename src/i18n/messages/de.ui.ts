@@ -299,6 +299,12 @@ export default {
   // ── Changelog ─────────────────────────────────────────
   "changelog.title": "Changelog",
 
+  "changelog.v301.date": "August 2026",
+  "changelog.v301.listingFlow": "Robusterer und transparenterer Listen-Import",
+  "changelog.v301.listingFlowDesc": "Endless Scroll lädt nach einem laufenden Request zuverlässig weiter, meldet sein Sicherheitslimit klar und die Import-Buttons auf Thumbnails reagieren wieder.",
+  "changelog.v301.liveState": "Status direkt an der Kachel",
+  "changelog.v301.liveStateDesc": "Ein erfolgreicher Batch setzt das Häkchen sofort. Hängengebliebene Prüf-Spinners werden nach Navigation oder Aktualisierung sauber zurückgesetzt und erneut geprüft; Fehler erscheinen schon während des Batch-Laufs.",
+
   "changelog.v300.date": "August 2026",
   "changelog.v300.hoverActions": "Import-Buttons auf jedem Thumbnail",
   "changelog.v300.hoverActionsDesc": "Beim Überfahren eines Thumbnails auf einer Listen-Seite erscheinen zwei Buttons: diesen Post importieren, oder importieren und als Relation mit dem vorherigen Import verknüpfen. Der Post wird im Hintergrund geladen, gescrapt und hochgeladen — du verlässt die Liste nie.",

@@ -39,6 +39,7 @@ export default {
   "batch.moreFailed": "Could not load the next page",
   "batch.moreRetry": "Retry",
   "batch.moreEnd": "End of the listing · {posts} posts loaded",
+  "batch.moreLimit": "{pages} page(s) loaded · safety limit reached",
   "batch.launcher": "Batch import ({count})",
   "batch.launcherBasket": "Batch import ({count}) · {basket} picked",
   "batch.selected": "{count} selected",

@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.1] – August 2026
+
+### Changed
+- **More transparent listing progress** — Endless scroll prefetches smoothly, reports its active/loading/completed state, and explicitly says when its 40-page safety cap was reached. Batch rows show failed items as they happen instead of only in the final summary.
+
+### Fixed
+- **Endless-scroll continuation** — When the observer fired while a page was still loading, it could remain in view without firing again afterwards. The loader now re-checks its actual position after every completed page.
+- **Live thumbnail states** — A successful batch immediately marks its matching thumbnail as imported. Stale badge spinners from a navigation or refresh are cleared and queried again instead of staying stuck forever.
+- **Thumbnail action buttons** — The import and import-and-link buttons now receive their own click event and are ignored by the batch selection handler.
+
+---
+
 ## [3.0.0] – August 2026
 
 ### Added

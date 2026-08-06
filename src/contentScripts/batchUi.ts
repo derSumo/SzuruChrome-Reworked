@@ -934,7 +934,7 @@ export function handleBatchStatus(data: any): void {
       done: data.done ?? 0,
       total: data.total ?? 0,
       skipped: data.skipped ?? 0,
-      failedCount: data.failedCount ?? undefined,
+      failedCount: data.failed ?? data.failedCount ?? undefined,
       poolName: data.poolName,
     });
     return;
