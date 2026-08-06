@@ -2,19 +2,21 @@
   "name": "szuruchrome",
   "displayName": "SzuruChrome Reworked",
   "description": "Import media from various sites into szurubooru. Reworked fork with QoL improvements.",
-  "version": "2.7.0",
+  "version": "3.0.0",
   "private": true,
   "scripts": {
     "dev": "npm run clear && cross-env NODE_ENV=development run-p dev:*",
     "dev:prepare": "esno scripts/prepare.ts",
     "dev:web": "vite",
     "dev:js": "npm run build:js -- --mode development",
-    "build": "cross-env NODE_ENV=production run-s clear build:web build:prepare build:js",
+    "dev:extras": "npm run build:extras -- --mode development",
+    "build": "cross-env NODE_ENV=production run-s clear build:web build:prepare build:js build:extras",
     "build:prepare": "esno scripts/prepare.ts",
     "build:web": "vite build",
     "build:js": "vite build --config vite.config.content.ts",
+    "build:extras": "vite build --config vite.config.extras.ts",
     "pack": "cross-env NODE_ENV=production run-p pack:zip pack:xpi",
-    "build:chrome": "cross-env NODE_ENV=production SZ_TARGET=chrome run-s clear build:web build:prepare build:js",
+    "build:chrome": "cross-env NODE_ENV=production SZ_TARGET=chrome run-s clear build:web build:prepare build:js build:extras",
     "pack:chrome": "cross-env SZ_TARGET=chrome run-s build:chrome pack:zip",
     "pack:zip": "rimraf extension.zip && jszip-cli add extension/* -o ./extension.zip",
     "pack:crx": "crx pack extension -o ./extension.crx",
@@ -29,7 +31,6 @@
     "pretty": "prettier -w ."
   },
   "dependencies": {
-    "axios": "^1.6.3",
     "byte-size": "^8.1.1",
     "deepmerge": "^4.3.1",
     "lodash": "^4.17.21",
@@ -37,8 +38,6 @@
     "neo-scraper": "^0.10.1",
     "normalize.css": "^8.0.1",
     "pinia": "^2.1.7",
-    "primeflex": "^3.3.1",
-    "primevue": "^3.45.0",
     "vue-router": "^4.2.5"
   },
   "devDependencies": {

@@ -4,79 +4,16 @@ import {
   getDefaultTagCategories,
   type ScrapedPostDetails,
   type SetPostUploadInfoData,
-  type SzuruSiteConfig,
-  type TagCategoryColor,
 } from "~/models";
 import { useStorageLocal } from "~/composables/useStorageLocal";
+import { CONFIG_STORAGE_KEY, defaultConfig } from "~/shared/config";
 
+// The config shape and its defaults live in `~/shared/config` so the
+// background and content script can read them without pulling in Vue/Pinia.
+// This store only adds reactivity plus the migration chain below.
 export const cfg = useStorageLocal(
-  "config",
-  {
-    version: 0,
-    language: "en" as "en" | "de",
-    addPageUrlToSource: true,
-    alwaysUploadAsContent: false,
-    autoSearchSimilar: false,
-    loadTagCounts: true,
-    fetchPostInfo: true,
-    useContentTokens: true,
-    sites: [] as Array<SzuruSiteConfig>,
-    selectedSiteId: undefined as string | undefined,
-    addTagImplications: true,
-    addAllParsedTags: true,
-    merge: {
-      expandOptions: true,
-      expandExistingTags: false,
-      expandAddTags: true,
-      addMissingTags: true,
-      appendSource: true,
-      mergeSafety: true,
-    },
-    popup: {
-      expandTags: true,
-      expandPools: false,
-      showSource: true,
-      showPools: true,
-      tagSortMode: "usage" as "usage" | "category" | "name",
-    },
-    tagCategories: [] as Array<TagCategoryColor>,
-    hotkey: {
-      enabled: false,
-      key: "a",
-      modifiers: [] as string[],
-    },
-    hotkeyLinkLast: {
-      enabled: false,
-      key: "",
-      modifiers: [] as string[],
-    },
-    autoRelationsEnabled: true,
-    autoRelationThreshold: 60,
-    replaceExactDuplicates: true,
-    uploadAsContentSites: [] as string[],
-    tagRules: {
-      enabled: true,
-      blacklist: [] as string[],
-      rewrites: [] as Array<{ from: string; to: string }>,
-    },
-    importedBadge: {
-      enabled: true,
-      // Off by default: a "not imported" pill on every booru page is noise for
-      // users who only import a fraction of what they browse.
-      showWhenNotImported: false,
-    },
-    queueRetry: {
-      enabled: true,
-      maxAttempts: 3,
-    },
-    statsEnabled: true,
-    batchImport: {
-      // Shows the "select & import" launcher on booru listing/gallery pages.
-      enabled: true,
-      // Cap concurrent background tabs the batch runner opens at once.
-      concurrency: 1,
-    },
-  },
+  CONFIG_STORAGE_KEY,
+  defaultConfig(),
   {
     mergeDefaults(storageValue, defaults) {
       // Default deepMerge concatenates arrays, which would append default
@@ -128,8 +65,56 @@ export const cfg = useStorageLocal(
           cfg.version++;
           // Batch import arrives in v2.7.0.
           if (!cfg.batchImport || typeof cfg.batchImport !== "object") {
-            cfg.batchImport = { enabled: true, concurrency: 1 };
+            cfg.batchImport = {
+              enabled: true,
+              concurrency: 1,
+              maxPages: 20,
+              maxPosts: 500,
+              skipImported: true,
+              separateWindow: true,
+            };
           }
+        // eslint-disable-next-line no-fallthrough
+        case 5:
+          cfg.version++;
+          // Native browser commands replace the page-level keydown listener.
+          // Drop obsolete settings so backups do not keep dead configuration.
+          delete (cfg as any).hotkey;
+          delete (cfg as any).hotkeyLinkLast;
+          delete (cfg as any).useContentTokens;
+        // eslint-disable-next-line no-fallthrough
+        case 6:
+          cfg.version++;
+          // The "all pages" crawl arrives in v2.8.0. deepMerge supplies the new
+          // limits, but a config stored with an explicit 0/undefined would let a
+          // crawl select nothing at all — pull those back to the defaults.
+          if (!(cfg.batchImport.maxPages > 0)) cfg.batchImport.maxPages = 20;
+          if (!(cfg.batchImport.maxPosts > 0)) cfg.batchImport.maxPosts = 500;
+        // eslint-disable-next-line no-fallthrough
+        case 7:
+          cfg.version++;
+          // Thumbnail marks, skip-already-imported and the separate batch
+          // window arrive in v2.9.0. deepMerge supplies the defaults; the
+          // guards only matter for a config that stored an explicit null.
+          if (typeof cfg.importedBadge.thumbnails !== "boolean") cfg.importedBadge.thumbnails = true;
+          if (typeof cfg.batchImport.skipImported !== "boolean") cfg.batchImport.skipImported = true;
+          if (typeof cfg.batchImport.separateWindow !== "boolean") cfg.batchImport.separateWindow = true;
+        // eslint-disable-next-line no-fallthrough
+        case 8:
+          cfg.version++;
+          // Listing-page features arrive in v3.0.0. Everything that changes how
+          // a site behaves starts off; only the hover import buttons default on.
+          if (!cfg.listing || typeof cfg.listing !== "object") {
+            cfg.listing = {
+              hoverActions: true,
+              endlessScroll: false,
+              hoverZoom: false,
+              hoverZoomScope: "sites",
+              hoverZoomSites: [],
+              hoverZoomDelayMs: 350,
+            };
+          }
+          if (!Array.isArray(cfg.listing.hoverZoomSites)) cfg.listing.hoverZoomSites = [];
       }
 
       if (oldVersion != cfg.version) {

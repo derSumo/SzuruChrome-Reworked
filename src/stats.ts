@@ -6,6 +6,9 @@
 // sequential — so the read-modify-write below cannot interleave with itself.
 // The options page only reads (plus explicit reset / failure dismissal).
 
+import { createWriteChain } from "~/shared/async";
+import { hostOf } from "~/shared/host";
+
 export const STATS_STORAGE_KEY = "szuru_stats";
 
 /** Keep the failure list bounded — it stores scrape payloads for retries. */
@@ -76,14 +79,7 @@ export function dayKey(timestamp: number): string {
   return `${d.getFullYear()}-${month}-${day}`;
 }
 
-export function hostOf(url?: string): string | undefined {
-  if (!url) return undefined;
-  try {
-    return new URL(url).host.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return undefined;
-  }
-}
+export { hostOf };
 
 export async function getStats(): Promise<ImportStats> {
   try {
@@ -111,15 +107,8 @@ async function writeStats(stats: ImportStats): Promise<void> {
 // write would clobber the first. Once all writers live in the background
 // context (the options page routes its mutations through messages — see the
 // background's stats_mutate handler), chaining them here fully serialises the
-// read-modify-write so no update is lost. A rejected op must not break the
-// chain, so its result is swallowed before the next op links on.
-let statsWriteChain: Promise<unknown> = Promise.resolve();
-
-function serializeStatsWrite<T>(op: () => Promise<T>): Promise<T> {
-  const run = statsWriteChain.then(op, op);
-  statsWriteChain = run.catch(() => { });
-  return run;
-}
+// read-modify-write so no update is lost.
+const serializeStatsWrite = createWriteChain();
 
 function pruneHistory(stats: ImportStats) {
   const keys = Object.keys(stats.byDay).sort();

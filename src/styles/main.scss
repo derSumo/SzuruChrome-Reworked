@@ -1,7 +1,5 @@
 @use "sass:color";
 
-@use "primeflex/primeflex.scss";
-
 /* open-sans-regular - latin */
 @font-face {
   font-family: "Open Sans";
@@ -237,6 +235,13 @@ a.remove-tag {
 
 .cursor-pointer {
   cursor: pointer;
+}
+
+// The UI is built from project-local "glass" components, so PrimeFlex's ~1300
+// utility classes were 360 kB of dead CSS in *both* the popup and the options
+// bundle for the sake of this one rule. Define it here instead.
+.ml-auto {
+  margin-left: auto;
 }
 
 .popup-section {

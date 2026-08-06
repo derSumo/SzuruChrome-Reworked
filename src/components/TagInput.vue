@@ -3,7 +3,6 @@ import { PropType } from "vue";
 import { TagDetails } from "~/models";
 import { encodeTagName, getTagClasses } from "~/utils";
 import SzurubooruApi from "~/api";
-import { CancelToken } from "axios";
 
 const autocompleteItems = ref<TagDetails[]>([]);
 
@@ -20,16 +19,20 @@ function addTagFromCurrentInput(input: string) {
   addTag(new TagDetails([input]));
 }
 
-async function autocompletePopulator(input: string, ct: CancelToken) {
+async function autocompletePopulator(input: string, signal: AbortSignal) {
   const query = decodeURIComponent(`*${encodeTagName(input)}* sort:usages`);
-  const res = await props.szuru?.getTags(query, 0, 100, ["names", "category", "usages", "implications"], ct);
+  try {
+    const res = await props.szuru?.getTags(query, 0, 100, ["names", "category", "usages", "implications"], signal);
 
-  if (res) {
-    // TODO: Maybe search on hamming distance or something?
-    autocompleteItems.value = res.results.map((x) => TagDetails.fromTag(x));
-    console.dir(autocompleteItems.value);
-  } else {
-    autocompleteItems.value = [];
+    if (res) {
+      // TODO: Maybe search on hamming distance or something?
+      autocompleteItems.value = res.results.map((x) => TagDetails.fromTag(x));
+      console.dir(autocompleteItems.value);
+    } else {
+      autocompleteItems.value = [];
+    }
+  } catch (ex) {
+    if (!signal.aborted) console.warn("Tag autocomplete failed:", ex);
   }
 }
 </script>

@@ -1,5 +1,79 @@
 # Changelog
 
+## [3.0.0] – August 2026
+
+### Added
+- **Import buttons on every thumbnail** — Hovering a thumbnail on a listing page shows two buttons: import this post, or import it and link it to the previous import as a relation (the link-chain the "import + link last" shortcut builds). The post is loaded, scraped and uploaded in the background; the listing stays where it is and the usual import toast reports the result.
+- **Range selection** — Shift-click selects everything between the last plain click and the new one, the way a file manager does; Ctrl/Cmd-click picks a single thumbnail without moving that anchor. Picking 40 posts is two clicks.
+- **Endless scroll (opt-in)** — Appends the next listing page as you approach the bottom instead of making you click through the pagination. Selection, "already imported" marks and hover buttons keep working on the appended posts, because it is still the same document.
+- **Hover zoom (opt-in)** — Enlarges the image under the cursor, reading the full-size file from the post page's own markup (og:image, data-file-url, …) so the preview is sharp rather than an upscaled 150px thumbnail. Restricted to a site whitelist by default, or "all supported sites". The preview opens beside the thumbnail, never on top of it, and is click-through so it can't swallow a hover.
+- **Hover zoom and endless scroll load on demand** — Both ship as a second content-script bundle (30 kB) that the background injects into a tab only once one of them is switched on. Pages of users who leave them off never parse a byte of either.
+
+### Changed
+- **Redesigned batch dock** — Rebuilt around a flat inline-SVG icon set: a header with a live count, an action row, labelled search and pool fields, and per-run rows showing imported / skipped / failed separately plus a rough time remaining. Progress bars have a running sheen, panels rise in, selections pop, and every animation is dropped under `prefers-reduced-motion`.
+- **"Stop" is now "Stop scanning"** — The old label read as "stop selecting", which is exactly what it did not do: everything the scan found stays selected. The button now also carries a stop icon and an amber state while the scan runs.
+
+### Fixed
+- **The thumbnail import buttons stay reachable** — They used to be re-parented onto the zoom preview, which is click-through by design, so they inherited that and stopped responding; and they vanished the moment the pointer left the thumbnail, which made them impossible to reach in the first place. They now stay anchored to the thumbnail, remain visible until another thumbnail is hovered or you click elsewhere, and only dim while the pointer is away.
+- **A batch survives a service-worker teardown** — The queue, its options and the results so far are mirrored into session storage and picked back up on the next worker start; anything that was mid-flight is simply queued again, which is safe because a post that did make it through is recognised as already imported. Opening a listing while a batch runs now also re-attaches its progress row instead of showing nothing until the next post finishes.
+
+---
+
+## [2.9.0] – August 2026
+
+### Added
+- **Start a new batch while one is running** — The progress panel no longer replaces the picker. Everything lives in one bottom-left dock: running imports sit above, the launcher or open picker below, so the next selection can be put together while the previous batch is still working.
+- **One growing queue instead of rival batches** — Importing again while a batch runs appends to that batch rather than starting a competing one, so the counter reads `12/84` instead of four rows each claiming `3/42`. URLs the batch has already queued are dropped on the way in, which makes a double click or an overlapping selection a no-op; the row says how many were added and how many were already there. Only a different pool name starts a separate batch, and that one waits its turn instead of running alongside.
+- **Selection survives paging** — The batch selection is no longer bound to one document. It lives per site in the background, so picking a few posts, going to the next page and picking more builds a single list; the picker re-opens by itself on the next listing with everything still selected. The counter says how many of the picks are on the current page, and a "Clear" button empties the basket. Two tabs on the same site merge their picks instead of overwriting each other.
+- **"Already imported" marks on listing thumbnails** — Every thumbnail whose post is already in the instance gets a check mark. Only thumbnails that scroll into view are looked up, and a screenful costs a single bulk `source:` query instead of one request per post. While a lookup is out the thumbnail shows a small spinner, so a slow instance reads as "still checking" rather than "none of these are imported"; the spinner only fades in after ~350 ms, so a fast answer never flashes one.
+- **Batch skips posts you already have** — Selected posts that are already in the instance are recognised before anything happens: no tab is opened, no page is loaded, no upload is attempted. Re-running a batch over a half-imported listing is now nearly instant. The progress panel reports how many were skipped.
+- **Batch runs in its own window** — The batch opens one separate, unfocused browser window, drives all its tabs there and closes it when finished, so the user's window stays clean. Falls back to background tabs in the current window if the window can't be created, and can be turned off in Settings.
+
+### Fixed
+- **Duplicate replacement now picks the genuinely better file** — The comparison used the scraped resolution, which most engines never report; a missing value counted as "0 pixels" and lost against every existing post, so an obviously larger re-import was silently discarded. The pixel size is now measured from the downloaded bytes, and an unknown resolution falls back to file size instead of losing outright.
+
+---
+
+## [2.8.0] – August 2026
+
+### Added
+- **One-click select all** — The batch launcher gained a second "All" button that opens the picker with every post on the page already selected. Inside the picker, "All" now toggles between selecting and clearing the whole page.
+- **"All pages" crawl** — A new button follows the listing's pagination, collects every post it links to and adds them all to the selection, with a live page/found counter and a stop button. Pages are fetched from the content script with the user's own session, so login-gated or filtered listings return exactly what the user sees; parsing happens in an inert document, so no thumbnail is downloaded.
+- **Import everything from one user or tag** — A search box in the batch toolbar re-points the crawl at any query (`user:name`, an artist tag, …). The search URL is derived from the listing the user is on, so it works on every supported booru without per-site code.
+- **Crawl limits** — Settings → General caps a crawl at 500 posts across 20 pages by default, so a single click on a broad search cannot queue thousands of imports.
+
+---
+
+## [2.7.0] – July 2026
+
+### Added
+- **Batch import from listing pages** — A "Batch import" launcher on booru listing and gallery pages: select any number of posts and import them all. Each is opened in a background tab, scraped, uploaded and closed, with a live progress bar.
+- **Pool import** — A pool name entered before starting a batch adds every imported post to that szurubooru pool in selection order, creating the pool when it does not exist.
+
+---
+
+## [2.6.0] – July 2026
+
+### Added
+- **Configuration export & import** — Settings → Interface exports all settings to a JSON file (with or without auth tokens) and restores them again.
+- **Tag suggestions from similar posts** — The popup offers the most common tags of visually similar posts as one-click chips, taken from the reverse-search result already fetched.
+- **Per-instance statistics** — The Statistics tab breaks imports, duplicates and failures down per szurubooru instance.
+
+---
+
+## [2.5.0] – July 2026
+
+### Changed
+- **Per-site source access** — Automatic content scripts are now dynamically registered only for supported source sites the user explicitly enables in Options. The extension no longer receives permanent access to all websites at install time.
+- **Native browser shortcuts** — Quick Import and Import + Link Last now use `commands`, so they can be rebound or disabled in the browser's extension shortcut settings. The page-level `keydown` handler and stored hotkey configuration were removed.
+- **Native HTTP client** — Replaced remaining Axios JSON calls with `fetch()` and `AbortController`; Axios is no longer a dependency or part of the bundle.
+
+### Added
+- **Toolbar status badge** — The action icon shows the active/queued import count and a per-tab check mark when the current source is already imported.
+- **Options-page component boundaries** — Extracted navigation, source-site permission controls, and the popup action bar into focused Vue components.
+
+---
+
 ## [2.4.1] – June 2026
 
 ### Changed

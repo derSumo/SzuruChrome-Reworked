@@ -101,20 +101,6 @@ export function saveSessionState(state: BackgroundSessionState): void {
   }, 250);
 }
 
-/** Force an immediate write — used before the worker is likely to be killed. */
-export async function flushSessionState(state: BackgroundSessionState): Promise<void> {
-  if (pendingWrite) {
-    clearTimeout(pendingWrite);
-    pendingWrite = undefined;
-    pendingState = undefined;
-  }
-  try {
-    await getArea().set({ [SESSION_STATE_KEY]: state });
-  } catch (ex) {
-    console.warn("Failed to flush background session state:", ex);
-  }
-}
-
 // ── Service-worker keep-alive ─────────────────────────────────────────
 // An in-flight upload can easily exceed the idle timeout while waiting on a
 // slow CDN, with no extension API call in between to reset it. Periodically

@@ -3,6 +3,17 @@ import { useColorMode } from "@vueuse/core";
 import byteSize from "byte-size";
 import { cfg } from "~/stores";
 import { getErrorMessage } from "~/utils";
+import { normalizeHost } from "~/shared/host";
+import {
+  SOURCE_SITES,
+  ensureInstancePermission,
+  hasSourceSitePermission,
+  removeSourceSitePermission,
+  requestSourceSitePermission,
+  type SourceSite,
+} from "~/shared/sourceSites";
+import OptionsSidebar from "./components/OptionsSidebar.vue";
+import SourceAccessSettings from "./components/SourceAccessSettings.vue";
 import { BrowserCommand, SzuruSiteConfig, TagCategoryColor, getDefaultTagCategories } from "~/models";
 import { previewTagRules } from "~/tagRules";
 import {
@@ -16,9 +27,10 @@ import {
   type ImportStats,
 } from "~/stats";
 import SzurubooruApi from "~/api";
-import { useI18n, setLanguage, type Language, availableLanguages } from "~/i18n";
+import { setLanguage, type Language } from "~/i18n";
+import { useI18n } from "~/i18n/vue";
 
-const { t } = useI18n();
+const { t, availableLanguages } = useI18n();
 
 type StatusType = "success" | "error" | "quiet";
 
@@ -52,6 +64,10 @@ const mode = useColorMode({ emitAuto: true });
 async function testConnection() {
   if (!selectedSite.value?.domain || !selectedSite.value?.username || !selectedSite.value?.authToken) {
     setStatus(t("options.instances.required"), "error");
+    return;
+  }
+  if (!await ensureInstancePermission(selectedSite.value.domain)) {
+    setStatus(t("options.instances.permissionRequired"), "error");
     return;
   }
   const api = new SzurubooruApi(selectedSite.value.domain, selectedSite.value.username, selectedSite.value.authToken);
@@ -102,6 +118,10 @@ function addTagCategory() {
 
 async function importTagCategoriesFromInstance() {
   const szuruConfig = cfg.value.sites.find((x) => x.id == cfg.value.selectedSiteId)!;
+  if (!await ensureInstancePermission(szuruConfig.domain)) {
+    setStatus(t("options.instances.permissionRequired"), "error");
+    return;
+  }
   const szuru = SzurubooruApi.createFromConfig(szuruConfig);
   const cats = (await szuru.getTagCategories()).results;
   for (const cat of cats) {
@@ -117,96 +137,32 @@ wnd.szc_get_config = () => JSON.parse(JSON.stringify(cfg.value));
 wnd.szc_set_config_version = (v = 0) => (cfg.value.version = v);
 
 // ── Hotkey recorder ──────────────────────────────────────
-const isRecordingHotkey = ref(false);
-const isRecordingHotkeyLinkLast = ref(false);
+const sourceSiteAccess = ref<Record<string, boolean>>({});
 
-const hotkeyDisplayText = computed(() => {
-  const h = cfg.value.hotkey;
-  if (!h.key) return t("options.general.hotkeyNotSet");
-  const parts: string[] = [];
-  if (h.modifiers.includes("ctrl")) parts.push("Ctrl");
-  if (h.modifiers.includes("alt")) parts.push("Alt");
-  if (h.modifiers.includes("shift")) parts.push("Shift");
-  parts.push(h.key.length === 1 ? h.key.toUpperCase() : h.key);
-  return parts.join(" + ");
-});
-
-function startRecordingHotkey() {
-  isRecordingHotkey.value = true;
+async function refreshSourceSiteAccess(): Promise<void> {
+  const values = await Promise.all(SOURCE_SITES.map(async (site) => [site.id, await hasSourceSitePermission(site)] as const));
+  sourceSiteAccess.value = Object.fromEntries(values);
 }
 
-function onHotkeyKeydown(e: KeyboardEvent) {
-  // Ignore pure modifier presses
-  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  const mods: string[] = [];
-  if (e.ctrlKey) mods.push("ctrl");
-  if (e.altKey) mods.push("alt");
-  if (e.shiftKey) mods.push("shift");
-
-  cfg.value.hotkey.key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  cfg.value.hotkey.modifiers = mods;
-  isRecordingHotkey.value = false;
-}
-
-function clearHotkey() {
-  cfg.value.hotkey.key = "";
-  cfg.value.hotkey.modifiers = [];
-}
-
-const hotkeyLinkLastDisplayText = computed(() => {
-  const h = cfg.value.hotkeyLinkLast;
-  if (!h.key) return t("options.general.hotkeyNotSet");
-  const parts: string[] = [];
-  if (h.modifiers.includes("ctrl")) parts.push("Ctrl");
-  if (h.modifiers.includes("alt")) parts.push("Alt");
-  if (h.modifiers.includes("shift")) parts.push("Shift");
-  parts.push(h.key.length === 1 ? h.key.toUpperCase() : h.key);
-  return parts.join(" + ");
-});
-
-function startRecordingHotkeyLinkLast() {
-  isRecordingHotkeyLinkLast.value = true;
-}
-
-function onHotkeyLinkLastKeydown(e: KeyboardEvent) {
-  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  const mods: string[] = [];
-  if (e.ctrlKey) mods.push("ctrl");
-  if (e.altKey) mods.push("alt");
-  if (e.shiftKey) mods.push("shift");
-
-  cfg.value.hotkeyLinkLast.key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  cfg.value.hotkeyLinkLast.modifiers = mods;
-  isRecordingHotkeyLinkLast.value = false;
-}
-
-function clearHotkeyLinkLast() {
-  cfg.value.hotkeyLinkLast.key = "";
-  cfg.value.hotkeyLinkLast.modifiers = [];
+async function setSourceSiteAccess(site: SourceSite, enabled: boolean): Promise<void> {
+  try {
+    // The first call inside this handler is the permission request/removal, so
+    // Chrome still considers it a direct user gesture.
+    const changed = enabled
+      ? await requestSourceSitePermission(site)
+      : await removeSourceSitePermission(site);
+    sourceSiteAccess.value = { ...sourceSiteAccess.value, [site.id]: enabled && changed };
+  } catch (ex) {
+    setStatus(getErrorMessage(ex), "error");
+    await refreshSourceSiteAccess();
+  }
 }
 
 // ── Per-site "upload as content" whitelist ───────────────────
 const newUploadAsContentSite = ref("");
 
-function normalizeHostInput(value: string): string {
-  if (!value) return "";
-  let s = value.trim();
-  try {
-    const url = new URL(s.includes("://") ? s : "https://" + s);
-    return url.host.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return s.toLowerCase().replace(/^www\./, "");
-  }
-}
-
 function addUploadAsContentSite(raw: string) {
-  const host = normalizeHostInput(raw);
+  const host = normalizeHost(raw);
   if (!host) return;
   if (!cfg.value.uploadAsContentSites) cfg.value.uploadAsContentSites = [];
   if (!cfg.value.uploadAsContentSites.includes(host)) {
@@ -218,6 +174,24 @@ function removeUploadAsContentSite(host: string) {
   if (!cfg.value.uploadAsContentSites) return;
   const idx = cfg.value.uploadAsContentSites.indexOf(host);
   if (idx >= 0) cfg.value.uploadAsContentSites.splice(idx, 1);
+}
+
+// ── Hover-zoom site whitelist ────────────────────────────────
+const newZoomSite = ref("");
+
+function addZoomSite() {
+  const host = normalizeHost(newZoomSite.value);
+  if (!host) return;
+  if (!cfg.value.listing.hoverZoomSites) cfg.value.listing.hoverZoomSites = [];
+  if (!cfg.value.listing.hoverZoomSites.includes(host)) {
+    cfg.value.listing.hoverZoomSites.push(host);
+  }
+  newZoomSite.value = "";
+}
+
+function removeZoomSite(host: string) {
+  const idx = cfg.value.listing.hoverZoomSites?.indexOf(host) ?? -1;
+  if (idx >= 0) cfg.value.listing.hoverZoomSites.splice(idx, 1);
 }
 
 function addNewSiteFromInput() {
@@ -339,7 +313,10 @@ function setStatsMessage(text: string, type: StatusType = "success") {
   statsMessageType.value = type;
 }
 
-onMounted(refreshStats);
+onMounted(() => {
+  void refreshStats();
+  void refreshSourceSiteAccess();
+});
 
 // The background writes stats as imports complete; mirror that live so an
 // open options page doesn't show a stale snapshot.
@@ -435,25 +412,14 @@ async function doResetStats() {
 
 <template>
   <div class="page">
-    <div class="sidebar">
-      <div class="sidebar-brand">
-        <span class="brand-name">{{ t("options.brand") }}</span>
-        <span class="brand-version">v{{ versionInfo }}</span>
-        <a class="brand-fork" href="https://github.com/derSumo/SzuruChrome-Reworked" target="_blank">{{ t("options.forkBy") }}</a>
-      </div>
-
-      <nav class="sidebar-nav">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          class="nav-item"
-          :class="{ active: activeTab === tab.id }"
-          @click="activeTab = tab.id"
-        >
-          {{ tab.label }}
-        </button>
-      </nav>
-    </div>
+    <OptionsSidebar
+      :tabs="tabs"
+      :active-tab="activeTab"
+      :version="versionInfo"
+      :brand="t('options.brand')"
+      :fork-by="t('options.forkBy')"
+      @select="activeTab = $event"
+    />
 
     <main class="content">
       <!-- General Tab -->
@@ -680,79 +646,17 @@ async function doResetStats() {
           </template>
         </div>
 
-        <div class="card">
-          <h3 class="card-title">{{ t("options.general.hotkey") }}</h3>
-
-          <div class="option-row">
-            <div class="option-info">
-              <span class="option-label">{{ t("options.general.hotkeyEnable") }}</span>
-              <span class="option-hint">{{ t("options.general.hotkeyEnableHint") }}</span>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" v-model="cfg.hotkey.enabled" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            </label>
-          </div>
-
-          <template v-if="cfg.hotkey.enabled">
-            <div class="option-row">
-              <div class="option-info">
-                <span class="option-label">{{ t("options.general.hotkeyShortcut") }}</span>
-                <span class="option-hint">{{ t("options.general.hotkeyShortcutHint") }}</span>
-              </div>
-              <div class="hotkey-recorder">
-                <button
-                  class="btn hotkey-btn"
-                  :class="{ recording: isRecordingHotkey }"
-                  @click="startRecordingHotkey"
-                  @keydown="isRecordingHotkey && onHotkeyKeydown($event)"
-                >
-                  {{ isRecordingHotkey ? t("options.general.hotkeyPressKeys") : hotkeyDisplayText }}
-                </button>
-                <button class="btn btn-secondary hotkey-clear" @click="clearHotkey" v-if="cfg.hotkey.key" title="Clear">✕</button>
-              </div>
-            </div>
-          </template>
-        </div>
+        <SourceAccessSettings
+          :access="sourceSiteAccess"
+          :title="t('options.permissions.title')"
+          :hint="t('options.permissions.hint')"
+          @change="setSourceSiteAccess"
+        />
 
         <div class="card">
-          <h3 class="card-title">{{ t("options.general.hotkeyLinkLast") }}</h3>
-
-          <div class="option-row">
-            <div class="option-info">
-              <span class="option-label">{{ t("options.general.hotkeyLinkLastEnable") }}</span>
-              <span class="option-hint">{{ t("options.general.hotkeyLinkLastEnableHint") }}</span>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" v-model="cfg.hotkeyLinkLast.enabled" />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            </label>
-          </div>
-
-          <template v-if="cfg.hotkeyLinkLast.enabled">
-            <div class="option-row">
-              <div class="option-info">
-                <span class="option-label">{{ t("options.general.hotkeyShortcut") }}</span>
-                <span class="option-hint">{{ t("options.general.hotkeyLinkLastShortcutHint") }}</span>
-              </div>
-              <div class="hotkey-recorder">
-                <button
-                  class="btn hotkey-btn"
-                  :class="{ recording: isRecordingHotkeyLinkLast }"
-                  @click="startRecordingHotkeyLinkLast"
-                  @keydown="isRecordingHotkeyLinkLast && onHotkeyLinkLastKeydown($event)"
-                >
-                  {{ isRecordingHotkeyLinkLast ? t("options.general.hotkeyPressKeys") : hotkeyLinkLastDisplayText }}
-                </button>
-                <button
-                  class="btn btn-secondary hotkey-clear"
-                  @click="clearHotkeyLinkLast"
-                  v-if="cfg.hotkeyLinkLast.key"
-                  title="Clear"
-                >✕</button>
-              </div>
-            </div>
-          </template>
+          <h3 class="card-title">{{ t("options.commands.title") }}</h3>
+          <p class="card-hint">{{ t("options.commands.hint") }}</p>
+          <p class="card-hint"><code>chrome://extensions/shortcuts</code></p>
         </div>
 
         <div class="card">
@@ -779,6 +683,105 @@ async function doResetStats() {
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
             </label>
           </div>
+
+          <div class="option-row" v-if="cfg.importedBadge.enabled">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.badge.thumbnails") }}</span>
+              <span class="option-hint">{{ t("options.badge.thumbnailsHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.importedBadge.thumbnails" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">{{ t("options.listing.title") }}</h3>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.listing.hoverActions") }}</span>
+              <span class="option-hint">{{ t("options.listing.hoverActionsHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.listing.hoverActions" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.listing.endlessScroll") }}</span>
+              <span class="option-hint">{{ t("options.listing.endlessScrollHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.listing.endlessScroll" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.listing.hoverZoom") }}</span>
+              <span class="option-hint">{{ t("options.listing.hoverZoomHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.listing.hoverZoom" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row" v-if="cfg.listing.hoverZoom">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.listing.hoverZoomScope") }}</span>
+              <span class="option-hint">{{ t("options.listing.hoverZoomScopeHint") }}</span>
+            </div>
+            <div class="select-wrapper">
+              <select v-model="cfg.listing.hoverZoomScope">
+                <option value="sites">{{ t("options.listing.hoverZoomScopeSites") }}</option>
+                <option value="all">{{ t("options.listing.hoverZoomScopeAll") }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="option-row" v-if="cfg.listing.hoverZoom">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.listing.hoverZoomDelay") }}</span>
+              <span class="option-hint">{{ t("options.listing.hoverZoomDelayHint") }}</span>
+            </div>
+            <div class="slider-group">
+              <input
+                type="range" min="0" max="1500" step="50"
+                v-model.number="cfg.listing.hoverZoomDelayMs" class="lq-slider"
+              />
+              <span class="slider-value">{{ cfg.listing.hoverZoomDelayMs }} ms</span>
+            </div>
+          </div>
+
+          <template v-if="cfg.listing.hoverZoom && cfg.listing.hoverZoomScope === 'sites'">
+            <p class="card-hint">{{ t("options.listing.hoverZoomSitesHint") }}</p>
+
+            <div class="uac-active">
+              <template v-if="(cfg.listing.hoverZoomSites ?? []).length === 0">
+                <div class="uac-empty">{{ t("options.listing.hoverZoomSitesEmpty") }}</div>
+              </template>
+              <span v-for="host in cfg.listing.hoverZoomSites" :key="host" class="uac-chip">
+                <span class="uac-host">{{ host }}</span>
+                <button class="uac-remove" @click="removeZoomSite(host)" title="Remove">✕</button>
+              </span>
+            </div>
+
+            <div class="uac-add-row">
+              <input
+                type="text"
+                :placeholder="t('options.general.uploadAsContentAddPlaceholder')"
+                v-model="newZoomSite"
+                @keydown.enter.prevent="addZoomSite"
+              />
+              <button class="btn btn-secondary" @click="addZoomSite">{{ t("options.general.uploadAsContentAdd") }}</button>
+            </div>
+          </template>
         </div>
 
         <div class="card">
@@ -797,6 +800,28 @@ async function doResetStats() {
 
           <div class="option-row" v-if="cfg.batchImport.enabled">
             <div class="option-info">
+              <span class="option-label">{{ t("options.batch.skipImported") }}</span>
+              <span class="option-hint">{{ t("options.batch.skipImportedHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.batchImport.skipImported" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row" v-if="cfg.batchImport.enabled">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.batch.separateWindow") }}</span>
+              <span class="option-hint">{{ t("options.batch.separateWindowHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.batchImport.separateWindow" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row" v-if="cfg.batchImport.enabled">
+            <div class="option-info">
               <span class="option-label">{{ t("options.batch.concurrency") }}</span>
               <span class="option-hint">{{ t("options.batch.concurrencyHint") }}</span>
             </div>
@@ -804,6 +829,30 @@ async function doResetStats() {
               <input type="range" min="1" max="3" step="1" v-model.number="cfg.batchImport.concurrency" class="lq-slider" />
               <span class="slider-value">{{ cfg.batchImport.concurrency }}×</span>
             </div>
+          </div>
+
+          <div class="option-row" v-if="cfg.batchImport.enabled">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.batch.maxPosts") }}</span>
+              <span class="option-hint">{{ t("options.batch.maxPostsHint") }}</span>
+            </div>
+            <input
+              type="number" min="1" max="10000" step="10"
+              v-model.number="cfg.batchImport.maxPosts"
+              class="limit-input"
+            />
+          </div>
+
+          <div class="option-row" v-if="cfg.batchImport.enabled">
+            <div class="option-info">
+              <span class="option-label">{{ t("options.batch.maxPages") }}</span>
+              <span class="option-hint">{{ t("options.batch.maxPagesHint") }}</span>
+            </div>
+            <input
+              type="number" min="1" max="500" step="1"
+              v-model.number="cfg.batchImport.maxPages"
+              class="limit-input"
+            />
           </div>
         </div>
 
@@ -1194,6 +1243,47 @@ async function doResetStats() {
         <h2 class="tab-title">{{ t("changelog.title") }}</h2>
 
         <div class="card changelog-card">
+          <div class="changelog-entry">
+            <div class="changelog-version">v3.0.0</div>
+            <div class="changelog-date">{{ t("changelog.v300.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v300.hoverActions") }}</strong> — {{ t("changelog.v300.hoverActionsDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.rangeSelect") }}</strong> — {{ t("changelog.v300.rangeSelectDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.endlessScroll") }}</strong> — {{ t("changelog.v300.endlessScrollDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.hoverZoom") }}</strong> — {{ t("changelog.v300.hoverZoomDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.hoverButtonsFix") }}</strong> — {{ t("changelog.v300.hoverButtonsFixDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.lazyExtras") }}</strong> — {{ t("changelog.v300.lazyExtrasDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.dockRedesign") }}</strong> — {{ t("changelog.v300.dockRedesignDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.stopLabel") }}</strong> — {{ t("changelog.v300.stopLabelDesc") }}</li>
+              <li><strong>{{ t("changelog.v300.batchDurable") }}</strong> — {{ t("changelog.v300.batchDurableDesc") }}</li>
+            </ul>
+          </div>
+
+          <div class="changelog-entry">
+            <div class="changelog-version">v2.9.0</div>
+            <div class="changelog-date">{{ t("changelog.v290.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v290.parallelBatches") }}</strong> — {{ t("changelog.v290.parallelBatchesDesc") }}</li>
+              <li><strong>{{ t("changelog.v290.oneQueue") }}</strong> — {{ t("changelog.v290.oneQueueDesc") }}</li>
+              <li><strong>{{ t("changelog.v290.selectionAcrossPages") }}</strong> — {{ t("changelog.v290.selectionAcrossPagesDesc") }}</li>
+              <li><strong>{{ t("changelog.v290.thumbMarks") }}</strong> — {{ t("changelog.v290.thumbMarksDesc") }}</li>
+              <li><strong>{{ t("changelog.v290.batchSkip") }}</strong> — {{ t("changelog.v290.batchSkipDesc") }}</li>
+              <li><strong>{{ t("changelog.v290.batchWindow") }}</strong> — {{ t("changelog.v290.batchWindowDesc") }}</li>
+              <li><strong>{{ t("changelog.v290.duplicateQuality") }}</strong> — {{ t("changelog.v290.duplicateQualityDesc") }}</li>
+            </ul>
+          </div>
+
+          <div class="changelog-entry">
+            <div class="changelog-version">v2.8.0</div>
+            <div class="changelog-date">{{ t("changelog.v280.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v280.selectAll") }}</strong> — {{ t("changelog.v280.selectAllDesc") }}</li>
+              <li><strong>{{ t("changelog.v280.allPages") }}</strong> — {{ t("changelog.v280.allPagesDesc") }}</li>
+              <li><strong>{{ t("changelog.v280.userImport") }}</strong> — {{ t("changelog.v280.userImportDesc") }}</li>
+              <li><strong>{{ t("changelog.v280.crawlLimits") }}</strong> — {{ t("changelog.v280.crawlLimitsDesc") }}</li>
+            </ul>
+          </div>
+
           <div class="changelog-entry">
             <div class="changelog-version">v2.7.0</div>
             <div class="changelog-date">{{ t("changelog.v270.date") }}</div>
@@ -2235,6 +2325,13 @@ html:not(.dark) .page select option {
   flex-shrink: 0;
 }
 
+/* Numeric limit next to an option label — narrow, so the hint keeps its room. */
+.page input[type="number"].limit-input {
+  width: 96px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
 .lq-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -2289,57 +2386,31 @@ html:not(.dark) .page select option {
   text-align: right;
 }
 
-.hotkey-recorder {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.source-access-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 6px 16px;
 }
 
-.hotkey-btn {
-  min-width: 130px;
-  background: var(--lq-input-bg);
-  border: 1px solid var(--lq-input-border);
-  color: var(--lq-text);
-  font-family: var(--lq-mono);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-align: center;
-  border-radius: var(--lq-radius-xs);
+.source-access-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 0;
+  color: var(--lq-text-secondary);
+  font-size: 13px;
 
-  &.recording {
-    background: var(--lq-accent-soft);
-    border-color: var(--lq-accent);
-    color: var(--lq-accent);
-    box-shadow: 0 0 0 3px var(--lq-accent-soft);
-    animation: lq-hotkey-pulse 1.2s ease-in-out infinite;
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-}
 
-@keyframes lq-hotkey-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-.hotkey-clear {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  background: transparent;
-  border: 1px solid var(--lq-input-border);
-  color: var(--lq-text-tertiary);
-  border-radius: var(--lq-radius-xs);
-  cursor: pointer;
-  transition: all var(--lq-transition);
-
-  &:hover {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: var(--lq-danger);
-    color: var(--lq-danger);
+  input {
+    flex: 0 0 auto;
+    accent-color: var(--lq-accent);
   }
 }
 

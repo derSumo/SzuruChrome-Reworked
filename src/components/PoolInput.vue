@@ -3,7 +3,6 @@ import { PropType } from "vue";
 import { PoolDetails } from "~/models";
 import { encodeTagName, getTagClasses } from "~/utils";
 import SzurubooruApi from "~/api";
-import { CancelToken } from "axios";
 
 const autocompleteItems = ref<PoolDetails[]>([]);
 
@@ -20,15 +19,19 @@ function addPoolFromCurrentInput(input: string) {
   addPool(new PoolDetails([input]));
 }
 
-async function autocompletePopulator(input: string, ct: CancelToken) {
+async function autocompletePopulator(input: string, signal: AbortSignal) {
   const query = decodeURIComponent(`*${encodeTagName(input)}*`);
-  const res = await props.szuru?.getPools(query, 0, 100, ["id", "names", "category", "description", "postCount"], ct);
+  try {
+    const res = await props.szuru?.getPools(query, 0, 100, ["id", "names", "category", "description", "postCount"], signal);
 
-  if (res) {
-    // TODO: Maybe search on hamming distance or something?
-    autocompleteItems.value = res.results.map((x) => PoolDetails.fromPool(x));
-  } else {
-    autocompleteItems.value = [];
+    if (res) {
+      // TODO: Maybe search on hamming distance or something?
+      autocompleteItems.value = res.results.map((x) => PoolDetails.fromPool(x));
+    } else {
+      autocompleteItems.value = [];
+    }
+  } catch (ex) {
+    if (!signal.aborted) console.warn("Pool autocomplete failed:", ex);
   }
 }
 </script>

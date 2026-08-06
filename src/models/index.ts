@@ -65,7 +65,9 @@ type MappedInstanceSpecificData = {
 };
 
 export class ScrapedPostDetails {
-  id = window.crypto.randomUUID();
+  // `crypto` (not `window.crypto`) so the class is also constructible from the
+  // MV3 service worker, which has no `window`.
+  id: string = crypto.randomUUID();
   name = "";
   tags: TagDetails[] = [];
   pools: PoolDetails[] = [];
@@ -81,6 +83,12 @@ export class ScrapedPostDetails {
   uploadMode: UploadMode;
   referrer?: string;
   resolution?: [number, number];
+  /**
+   * Pixel size read from the downloaded file itself. Unlike `resolution` (which
+   * only exists when the booru printed one) this is always trustworthy, so the
+   * duplicate comparison prefers it.
+   */
+  measuredResolution?: [number, number];
   instanceSpecificData: MappedInstanceSpecificData = {};
 
   constructor(post: ScrapedPost) {
@@ -143,15 +151,18 @@ export type BrowserCommandName =
   | "fetch_content"
   | "fetch_head_info"
   | "quick_import_status"
-  | "hotkey_import"
-  | "hotkey_import_link_last"
   | "get_active_imports"
   | "report_progress"
   | "check_imported"
+  | "check_imported_bulk"
   | "retry_failed_import"
   | "stats_mutate"
   | "batch_import"
-  | "batch_status";
+  | "batch_selection"
+  | "batch_active"
+  | "batch_status"
+  | "import_post_url"
+  | "inject_listing_extras";
 
 export class BrowserCommand<T = any> {
   name: BrowserCommandName;
@@ -203,16 +214,10 @@ export class FetchCommandData {
   ) { }
 }
 
-export class HotkeyImportCommandData {
-  constructor(
-    public readonly url: string,
-    public readonly linkWithLastPost = false,
-    public readonly importId?: string,
-  ) { }
-}
-
 export class SzuruSiteConfig {
-  id = window.crypto.randomUUID();
+  // Explicitly `string`: `randomUUID()` is typed as a template literal, which
+  // would reject any id round-tripped through storage.
+  id: string = crypto.randomUUID();
   domain = "https://example.com";
   username = "user";
   authToken = "";

@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import axios, { CancelTokenSource } from "axios";
-
 const inputText = ref("");
 const autocompleteShown = ref(false);
-const cancelSource = ref<CancelTokenSource | undefined>(undefined);
+const abortController = ref<AbortController | undefined>(undefined);
 const autocompleteIndex = ref(-1);
 
 const props = defineProps({
@@ -75,14 +73,15 @@ async function autocompletePopulator(input: string) {
     return;
   }
 
-  // Cancel previous request, not sure if this still works after the refactor.
-  if (cancelSource.value) {
-    cancelSource.value.cancel();
-  }
-  cancelSource.value = axios.CancelToken.source();
+  // A newer keystroke makes the previous result stale. Native fetch honours
+  // this signal all the way through the API wrapper.
+  abortController.value?.abort();
+  abortController.value = new AbortController();
 
-  emit("autocompletePopulator", inputText.value, cancelSource.value.token);
+  emit("autocompletePopulator", inputText.value, abortController.value.signal);
 }
+
+onUnmounted(() => abortController.value?.abort());
 
 watch(props, (newValue) => {
   if (newValue.autocompleteItems.length > 0) {

@@ -50,14 +50,30 @@ export async function getManifest() {
     },
     background,
     permissions,
-    host_permissions: ["http://*/*", "https://*/*"],
-    content_scripts: [
-      {
-        matches: ["http://*/*", "https://*/*"],
-        js: [p("./dist/contentScripts/index.global.js")],
+    commands: {
+      "quick-import": {
+        suggested_key: {
+          default: "Ctrl+Shift+Y",
+          mac: "Command+Shift+Y",
+        },
+        description: "Import the current page",
       },
-    ],
+      "quick-import-link-last": {
+        suggested_key: {
+          default: "Ctrl+Shift+U",
+          mac: "Command+Shift+U",
+        },
+        description: "Import the current page and link it to the previous import",
+      },
+    },
   };
+
+  // `webextension-polyfill`'s manifest type still omits this MV3 key. Nothing
+  // gets permanent host access at install time; individual booru sources and
+  // configured instances are requested from explicit UI actions.
+  // The broad optional declaration merely allows a user-entered Szurubooru
+  // domain; requests always contain one concrete origin.
+  (manifest as any).optional_host_permissions = ["https://*/*", "http://*/*"];
 
   if (process.env.SZ_GECKO_ID) {
     manifest.browser_specific_settings = {
@@ -72,9 +88,9 @@ export async function getManifest() {
   }
 
   if (isDev) {
-    // For content script, as browsers will cache them for each reload,
-    // we use a background hook to always inject the latest version.
-    delete manifest.content_scripts;
+    // Firefox caches scripts injected into an already open tab. The dev hook
+    // re-injects the latest bundle after navigation, but only on granted source
+    // sites (see background/contentScriptHMR.ts).
     manifest.permissions?.push("webNavigation");
 
     // this is required on dev for Vite script to load

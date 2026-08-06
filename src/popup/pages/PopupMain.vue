@@ -2,18 +2,21 @@
 import { useDark } from "@vueuse/core";
 import { cloneDeep } from "lodash";
 import { ScrapeResults } from "neo-scraper";
-import { useI18n, setLanguage, Language } from "~/i18n";
+import { setLanguage, Language } from "~/i18n";
+import { useI18n } from "~/i18n/vue";
 import {
-  getUrl,
   encodeTagName,
   getErrorMessage,
   getPostInfoSummary,
-  ensurePostHasContentToken,
   getTagClasses,
   breakTagName,
 } from "~/utils";
+import { getUrl } from "~/shared/host";
+import { ensureInstancePermission } from "~/shared/sourceSites";
+import { applyConfigToScrapedPost, buildPostDisplayName } from "~/shared/scrape";
+import { getActiveTab, getActiveTabId, isRestrictedTabUrl, sendTabCommand } from "~/shared/tabs";
+import { ensurePostHasContentToken } from "../contentToken";
 import {
-  BrowserCommand,
   ScrapedPostDetails,
   TagDetails,
   SimilarPostInfo,
@@ -22,12 +25,13 @@ import {
   PostUploadCommandData,
   SzuruSiteConfig,
   PoolDetails,
+  BrowserCommand,
 } from "~/models";
-import { applyTagRulesToTagList } from "~/tagRules";
 import { isMobile } from "~/env";
 import { DeepReadonly } from "vue";
 import { cfg, usePopupStore } from "~/stores";
 import SzurubooruApi from "~/api";
+import PopupActionBar from "~/popup/components/PopupActionBar.vue";
 
 const pop = usePopupStore();
 const { t } = useI18n();
@@ -227,44 +231,10 @@ async function checkServerStatus() {
   }
 }
 
-async function getActiveTabId(): Promise<number> {
-  const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
-  if (activeTabs.length > 0 && activeTabs[0].id) return activeTabs[0].id;
-  throw new Error("No active tab.");
-}
-
-function isRestrictedTabUrl(url?: string) {
-  if (!url) return false;
-  const x = url.toLowerCase();
-  return x.startsWith("chrome://") || x.startsWith("edge://") || x.startsWith("about:");
-}
-
-async function ensureContentScriptLoaded(tabId: number) {
-  const scripting = (browser as any).scripting;
-  if (scripting?.executeScript) {
-    await scripting.executeScript({
-      target: { tabId },
-      files: ["dist/contentScripts/index.global.js"],
-    });
-    return;
-  }
-
-  // Firefox fallback (MV2 API)
-  await browser.tabs.executeScript(tabId, { file: "./dist/contentScripts/index.global.js" });
-}
-
-function isMissingContentScriptError(ex: unknown) {
-  const msg = getErrorMessage(ex).toLowerCase();
-  return msg.includes("receiving end does not exist")
-    || msg.includes("could not establish connection")
-    || msg.includes("no matching message handler");
-}
-
 async function grabPost() {
   scrapeError.value = undefined;
 
-  const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
-  const activeTab = activeTabs[0];
+  const activeTab = await getActiveTab();
   if (!activeTab?.id) {
     scrapeError.value = t("popup.noActiveTab");
     pop.posts.splice(0);
@@ -276,50 +246,19 @@ async function grabPost() {
     return;
   }
 
-  const activeTabId = activeTab.id;
-  let x: any;
-  try {
-    x = await browser.tabs.sendMessage(activeTabId, new BrowserCommand("grab_post"));
-  } catch (ex) {
-    if (!isMissingContentScriptError(ex)) throw ex;
-    await ensureContentScriptLoaded(activeTabId);
-    x = await browser.tabs.sendMessage(activeTabId, new BrowserCommand("grab_post"));
-  }
-  const res: ScrapeResults = Object.assign(new ScrapeResults(), x);
+  const raw = await sendTabCommand(activeTab.id, "grab_post");
+  const res: ScrapeResults = Object.assign(new ScrapeResults(), raw);
 
   pop.posts.splice(0);
 
   for (const result of res.results) {
-    for (const i in result.posts) {
-      const vm = new ScrapedPostDetails(result.posts[i]);
-      const name = result.posts[i].name ?? `Post ${parseInt(i) + 1}`;
-      vm.name = `[${result.engine}] ${name}`;
+    for (const [index, scrapedPost] of result.posts.entries()) {
+      const vm = new ScrapedPostDetails(scrapedPost);
+      vm.name = buildPostDisplayName(result.engine, scrapedPost.name, index);
 
-      if (!cfg.value.addAllParsedTags) vm.tags.splice(0);
-      // Blacklist / rename rules, identical to the background import path.
-      vm.tags = applyTagRulesToTagList(vm.tags, cfg.value.tagRules);
-      const matchesUploadAsContentSite = (() => {
-        try {
-          const list = cfg.value.uploadAsContentSites ?? [];
-          if (list.length === 0 || !vm.pageUrl) return false;
-          const host = new URL(vm.pageUrl).host.toLowerCase().replace(/^www\./, "");
-          return list.some((entry) => {
-            try {
-              const target = new URL(entry.includes("://") ? entry : `https://${entry}`)
-                .host.toLowerCase().replace(/^www\./, "");
-              return host === target || host.endsWith("." + target);
-            } catch { return false; }
-          });
-        } catch { return false; }
-      })();
-      if ((cfg.value.alwaysUploadAsContent || matchesUploadAsContentSite) && vm.name !== "[fallback] Upload as URL") {
-        vm.uploadMode = "content";
-      }
-
-      if (cfg.value.addPageUrlToSource || vm.source == "") {
-        if (vm.source != "") vm.source += "\n";
-        vm.source += vm.pageUrl;
-      }
+      // Tag rules, forced content upload and source handling are shared with
+      // the background import path so both routes honour the same settings.
+      applyConfigToScrapedPost(vm, cfg.value);
 
       for (const site of cfg.value.sites) {
         vm.instanceSpecificData[site.id] = {};
@@ -343,6 +282,11 @@ async function grabPost() {
 
 async function upload() {
   if (!cfg.value.selectedSiteId || isSubmitting.value) return;
+  if (!selectedSite.value || !await ensureInstancePermission(selectedSite.value.domain)) {
+    uploadPhase.value = "error";
+    uploadResultError.value = "Access to the selected Szurubooru instance was not granted.";
+    return;
+  }
   const isd = pop.selectedPost?.instanceSpecificData[cfg.value.selectedSiteId];
 
   if (instanceSpecificData.value?.reverseSearchResult?.exactPostId) return;
@@ -359,6 +303,7 @@ async function upload() {
   try {
     const post: ScrapedPostDetails = cloneDeep(pop.selectedPost)!;
     const activeTabId = await getActiveTabId().catch(() => undefined);
+
     const cmdData = new PostUploadCommandData(post, <SzuruSiteConfig>cloneDeep(selectedSite.value), activeTabId);
     const finalInfo = await browser.runtime.sendMessage(new BrowserCommand("upload_post", cmdData));
     // finalInfo is the authoritative result (sendMessage return value is always delivered)
@@ -515,24 +460,15 @@ async function loadTagCounts() {
 }
 
 async function fetchContentViaActiveTab(url: string): Promise<{ base64: string; mimeType: string }> {
-  const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
-  const activeTabId = activeTabs[0]?.id;
-  const activeTabUrl = activeTabs[0]?.url;
-  if (!activeTabId) throw new Error("No active tab");
-  if (isRestrictedTabUrl(activeTabUrl)) throw new Error("Active tab is a restricted URL");
-  try {
-    return await browser.tabs.sendMessage(activeTabId, new BrowserCommand("fetch_content", { url }));
-  } catch (ex) {
-    if (!isMissingContentScriptError(ex)) throw ex;
-    await ensureContentScriptLoaded(activeTabId);
-    return await browser.tabs.sendMessage(activeTabId, new BrowserCommand("fetch_content", { url }));
-  }
+  const activeTab = await getActiveTab();
+  if (!activeTab?.id) throw new Error("No active tab");
+  if (isRestrictedTabUrl(activeTab.url)) throw new Error("Active tab is a restricted URL");
+  return sendTabCommand(activeTab.id, "fetch_content", { url });
 }
 
 async function updatePostWithRemoteInfo(post: ScrapedPostDetails, contentUrl: string) {
   try {
-    const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
-    const activeTabId = activeTabs[0]?.id;
+    const activeTabId = await getActiveTabId();
 
     let contentType: string | undefined;
     let contentLength: string | undefined;
@@ -542,7 +478,7 @@ async function updatePostWithRemoteInfo(post: ScrapedPostDetails, contentUrl: st
     // Referer, bypassing CDN hotlink protection (e.g. Gelbooru).
     if (activeTabId) {
       try {
-        const info: any = await browser.tabs.sendMessage(activeTabId, new BrowserCommand("fetch_head_info", { url: contentUrl }));
+        const info: any = await sendTabCommand(activeTabId, "fetch_head_info", { url: contentUrl });
         contentType = info?.contentType;
         contentLength = info?.contentLength;
         finalUrl = info?.finalUrl;
@@ -725,29 +661,6 @@ useDark();
       <span class="gc-status-msg" :class="{ 'gc-status-error': !!scrapeError }" :title="scrapeError || t('popup.noContent')">
         {{ scrapeError || t("popup.noContent") }}
       </span>
-      <div class="gc-hotkeys">
-        <label class="glass-toggle-pill" :title="t('popup.hotkeyToggle')">
-          <svg class="glass-toggle-icon" viewBox="0 0 16 16" fill="none">
-            <rect x="1" y="3.5" width="14" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-            <rect x="3" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-            <rect x="7" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-            <rect x="11" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-            <rect x="3" y="8.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-            <rect x="5.5" y="8.5" width="5" height="1.5" rx="0.4" fill="currentColor"/>
-            <rect x="11" y="8.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-          </svg>
-          <input type="checkbox" v-model="cfg.hotkey.enabled" />
-          <span class="glass-toggle-track"><span class="glass-toggle-knob"></span></span>
-        </label>
-        <label class="glass-toggle-pill" :title="t('popup.hotkeyLinkLastToggle')">
-          <svg class="glass-toggle-icon" viewBox="0 0 16 16" fill="none">
-            <path d="M6.5 9.5a3.5 3.5 0 005 0l2-2a3.5 3.5 0 00-5-5L7.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-            <path d="M9.5 6.5a3.5 3.5 0 00-5 0l-2 2a3.5 3.5 0 005 5l1-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-          </svg>
-          <input type="checkbox" v-model="cfg.hotkeyLinkLast.enabled" />
-          <span class="glass-toggle-track"><span class="glass-toggle-knob"></span></span>
-        </label>
-      </div>
     </div>
 
   </div>
@@ -965,30 +878,7 @@ useDark();
             <span class="glass-chip" :class="getFormatChipClass(pop.selectedPost.contentSubType || pop.selectedPost.contentType)">{{ pop.selectedPost.contentSubType || pop.selectedPost.contentType }}</span>
             <span v-if="getPostInfoSummary(pop.selectedPost)" class="glass-chip glass-chip-dim">{{ getPostInfoSummary(pop.selectedPost) }}</span>
           </div>
-          <div class="glass-hotkey-row">
-            <label class="glass-toggle-pill" :title="t('popup.hotkeyToggle')">
-              <!-- Keyboard / Hotkey icon -->
-              <svg class="glass-toggle-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="1" y="3.5" width="14" height="9" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-                <rect x="3" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-                <rect x="7" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-                <rect x="11" y="5.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-                <rect x="3" y="8.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-                <rect x="5.5" y="8.5" width="5" height="1.5" rx="0.4" fill="currentColor"/>
-                <rect x="11" y="8.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
-              </svg>
-              <input type="checkbox" v-model="cfg.hotkey.enabled" />
-              <span class="glass-toggle-track"><span class="glass-toggle-knob"></span></span>
-            </label>
-            <label class="glass-toggle-pill" :title="t('popup.hotkeyLinkLastToggle')">
-              <!-- Link / Chain icon -->
-              <svg class="glass-toggle-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M6.5 9.5a3.5 3.5 0 005 0l2-2a3.5 3.5 0 00-5-5L7.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                <path d="M9.5 6.5a3.5 3.5 0 00-5 0l-2 2a3.5 3.5 0 005 5l1-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-              </svg>
-              <input type="checkbox" v-model="cfg.hotkeyLinkLast.enabled" />
-              <span class="glass-toggle-track"><span class="glass-toggle-knob"></span></span>
-            </label>
+          <div class="glass-preview-links">
             <a v-if="uploadSuccess" class="glass-chip glass-chip-link" :href="getActiveSitePostUrl(uploadResultPostId!)" target="_blank">#{{ uploadResultPostId }}</a>
           </div>
         </div>
@@ -997,17 +887,19 @@ useDark();
     </div>
 
     <!-- Import bar -->
-    <footer class="glass-action-bar">
-      <button v-if="!cfg.autoSearchSimilar" class="glass-btn glass-btn-ghost" :disabled="isSubmitting" @click="clickFindSimilar">{{ t("popup.findSimilar") }}</button>
-      <button
-        class="glass-btn glass-btn-primary"
-        :disabled="isSubmitting || isUploading || !!instanceSpecificData?.reverseSearchResult?.exactPostId || uploadSuccess"
-        @click="upload"
-      >
-        <span v-if="isSubmitting || isUploading" class="glass-spinner glass-spinner-sm"></span>
-        <span>{{ isSubmitting || isUploading ? t('popup.importing') : uploadSuccess ? t('popup.imported') : t('popup.import') }}</span>
-      </button>
-    </footer>
+    <PopupActionBar
+      :show-find-similar="!cfg.autoSearchSimilar"
+      :is-submitting="isSubmitting"
+      :is-uploading="isUploading"
+      :upload-success="uploadSuccess"
+      :has-exact-match="!!instanceSpecificData?.reverseSearchResult?.exactPostId"
+      :find-similar-label="t('popup.findSimilar')"
+      :importing-label="t('popup.importing')"
+      :imported-label="t('popup.imported')"
+      :import-label="t('popup.import')"
+      @find-similar="clickFindSimilar"
+      @upload="upload"
+    />
 
   </div>
 </template>
@@ -1926,66 +1818,10 @@ useDark();
 }
 
 /* â”€â”€ Hotkey toggles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-.glass-hotkey-row {
+.glass-preview-links {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.glass-toggle-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  color: var(--g-text-2);
-  transition: color var(--g-transition);
-  &:hover { color: var(--g-text); }
-
-  input { display: none; }
-}
-
-.glass-toggle-label { font-size: 12px; }
-
-.glass-toggle-icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  opacity: 0.55;
-  transition: opacity var(--g-transition), transform var(--g-transition);
-}
-
-.glass-toggle-pill:hover .glass-toggle-icon {
-  opacity: 0.9;
-  transform: scale(1.1);
-}
-
-.glass-toggle-track {
-  position: relative;
-  width: 28px;
-  height: 16px;
-  border-radius: 999px;
-  border: 1px solid var(--g-border);
-  background: rgba(255, 255, 255, 0.06);
-  transition: all var(--g-transition);
-}
-
-.glass-toggle-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: transform var(--g-transition);
-}
-
-.glass-toggle-pill input:checked ~ .glass-toggle-track {
-  background: var(--g-accent);
-  border-color: rgba(110, 142, 255, 0.35);
-
-  .glass-toggle-knob { transform: translateX(12px); }
 }
 
 /* â”€â”€ Action bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -2144,13 +1980,6 @@ useDark();
   white-space: nowrap;
 
   &.gc-status-error { color: #fca5a5; }
-}
-
-.gc-hotkeys {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
 }
 
 /* â”€â”€ Empty state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */

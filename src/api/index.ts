@@ -1,4 +1,3 @@
-import axios, { AxiosRequestConfig, CancelToken } from "axios";
 import { isEqual } from "lodash";
 import {
   TagsResult,
@@ -18,7 +17,8 @@ import {
 } from "./models";
 import { ScrapedPostDetails, SzuruSiteConfig } from "~/models";
 import { UploadMode } from "neo-scraper";
-import { guessMimeTypeFromUrl } from "~/utils";
+import { guessFilenameFromUrl, guessMimeTypeFromUrl, isSupportedMediaType } from "~/shared/media";
+import { isPlausibleMediaSize, MIN_PLAUSIBLE_MEDIA_BYTES } from "~/shared/binary";
 
 /**
  * A 1:1 wrapper around the szurubooru API.
@@ -80,7 +80,7 @@ export default class SzurubooruApi {
     offset = 0,
     limit = 100,
     fields?: TagFields[],
-    cancelToken?: CancelToken,
+    signal?: AbortSignal,
   ): Promise<TagsResult> {
     const params = new URLSearchParams();
     params.append("offset", offset.toString());
@@ -89,7 +89,7 @@ export default class SzurubooruApi {
     if (fields && fields.length > 0) params.append("fields", fields.join());
     if (query) params.append("query", query);
 
-    return (await this.apiGet("tags?" + params.toString(), {}, cancelToken)).data;
+    return (await this.apiGet("tags?" + params.toString(), {}, signal)).data;
   }
 
   async getTagCategories(): Promise<TagCategoriesResult> {
@@ -138,7 +138,7 @@ export default class SzurubooruApi {
     offset = 0,
     limit = 100,
     fields?: PoolFields[],
-    cancelToken?: CancelToken,
+    signal?: AbortSignal,
   ): Promise<PoolsResult> {
     const params = new URLSearchParams();
     params.append("offset", offset.toString());
@@ -147,7 +147,7 @@ export default class SzurubooruApi {
     if (fields && fields.length > 0) params.append("fields", fields.join());
     if (query) params.append("query", query);
 
-    return (await this.apiGet("pools?" + params.toString(), {}, cancelToken)).data;
+    return (await this.apiGet("pools?" + params.toString(), {}, signal)).data;
   }
 
   async updatePool(id: number, updateRequest: UpdatePoolRequest): Promise<Pool> {
@@ -196,10 +196,8 @@ export default class SzurubooruApi {
     const formData = new FormData();
     formData.append("content", blob, filename ?? "file.bin");
 
-    // Use native fetch() instead of Axios for FormData uploads.
-    // Axios's fetch adapter (used in MV3 service workers) can fail with
-    // "Network Error" for multipart/form-data POSTs in Brave/Chrome due to
-    // CORS handling differences, while native fetch works reliably.
+    // Use native fetch() for FormData uploads. Its multipart handling works in
+    // MV3 service workers without an adapter-specific transport layer.
     // Do NOT set Content-Type — let the browser auto-set it with the correct
     // multipart boundary; explicitly setting it breaks the request.
     const headers: Record<string, string> = { Accept: "application/json" };
@@ -245,8 +243,8 @@ export default class SzurubooruApi {
     let content = await res.blob();
 
     // Reject obviously wrong content (e.g. HTML error pages from CDN protection).
-    if (content.size < 64) {
-      throw new Error(`Response body too small (${content.size} bytes) – likely not actual media content.`);
+    if (!isPlausibleMediaSize(content.size)) {
+      throw new Error(`Response body too small (${content.size} bytes, expected at least ${MIN_PLAUSIBLE_MEDIA_BYTES}) – likely not actual media content.`);
     }
 
     const correctedMime = guessMimeTypeFromUrl(contentUrl, content.type);
@@ -255,22 +253,15 @@ export default class SzurubooruApi {
     }
 
     // Reject content that looks like an HTML error page rather than media.
-    const mimePrefix = correctedMime.split("/")[0];
-    if (mimePrefix !== "image" && mimePrefix !== "video" && correctedMime !== "application/x-shockwave-flash") {
+    if (!isSupportedMediaType(correctedMime)) {
       throw new Error(`Unexpected content type '${correctedMime}' – CDN likely returned an error page.`);
     }
 
     const fullUrl = this.apiUrl + "uploads";
 
     // Derive a filename from the URL so szurubooru can use the extension as a type hint.
-    let filename = "file.bin";
-    try {
-      const lastSegment = new URL(contentUrl).pathname.split("/").pop();
-      if (lastSegment && lastSegment.includes(".")) filename = lastSegment;
-    } catch { /* ignore */ }
-
     const formData = new FormData();
-    formData.append("content", content, filename);
+    formData.append("content", content, guessFilenameFromUrl(contentUrl, correctedMime));
 
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.username && this.authToken) {
@@ -323,54 +314,51 @@ export default class SzurubooruApi {
     return detail;
   }
 
-  private async apiGet(url: string, additionalHeaders: any = {}, cancelToken?: CancelToken): Promise<any> {
-    const fullUrl = this.apiUrl + url;
-    const config: AxiosRequestConfig = {
-      method: "GET",
-      url: fullUrl,
-      cancelToken,
-    };
-
-    config.headers = { ...this.baseHeaders, ...additionalHeaders };
-    return this.execute(config);
+  private async apiGet(url: string, additionalHeaders: Record<string, string> = {}, signal?: AbortSignal): Promise<{ data: any }> {
+    return this.execute(url, { method: "GET", headers: additionalHeaders, signal });
   }
 
-  private async apiPost(url: string, data: any, additionalHeaders: any = {}): Promise<any> {
-    const fullUrl = this.apiUrl + url;
-    const config: AxiosRequestConfig = {
+  private async apiPost(url: string, data: any, additionalHeaders: Record<string, string> = {}): Promise<{ data: any }> {
+    return this.execute(url, {
       method: "POST",
-      url: fullUrl,
-      data: data,
-    };
-
-    config.headers = { ...this.baseHeaders, ...additionalHeaders };
-    return this.execute(config);
+      headers: additionalHeaders,
+      body: JSON.stringify(data),
+    });
   }
 
-  private async apiPut(url: string, data: any, additionalHeaders: any = {}): Promise<any> {
-    const fullUrl = this.apiUrl + url;
-    const config: AxiosRequestConfig = {
+  private async apiPut(url: string, data: any, additionalHeaders: Record<string, string> = {}): Promise<{ data: any }> {
+    return this.execute(url, {
       method: "PUT",
-      url: fullUrl,
-      data: data,
-    };
-
-    config.headers = { ...this.baseHeaders, ...additionalHeaders };
-    return this.execute(config);
+      headers: additionalHeaders,
+      body: JSON.stringify(data),
+    });
   }
 
-  private async execute(config: AxiosRequestConfig): Promise<any> {
+  private async execute(url: string, init: RequestInit): Promise<{ data: any }> {
+    const headers: Record<string, string> = {
+      ...this.baseHeaders,
+      ...(init.headers as Record<string, string> | undefined),
+    };
     if (this.username && this.authToken) {
-      const token = "Token " + btoa(`${this.username}:${this.authToken}`);
-      if (!config.headers) config.headers = {};
-      config.headers["Authorization"] = token;
+      headers.Authorization = "Token " + btoa(`${this.username}:${this.authToken}`);
     }
 
-    try {
-      return await axios(config);
-    } catch (ex: any) {
-      const error = ex.response?.data as SzuruError | undefined;
-      throw error?.name ? error : ex;
+    const response = await fetch(this.apiUrl + url, { ...init, headers });
+    if (!response.ok) {
+      let error: SzuruError | undefined;
+      try {
+        error = await response.json() as SzuruError;
+      } catch {
+        // A reverse proxy may return an HTML error page. Keep a useful HTTP
+        // error instead of replacing it with a JSON parsing exception.
+      }
+      if (error?.name) throw error;
+
+      const httpError = new Error(`HTTP ${response.status} ${response.statusText}`);
+      Object.assign(httpError, { status: response.status, statusText: response.statusText });
+      throw httpError;
     }
+
+    return { data: await response.json() };
   }
 }

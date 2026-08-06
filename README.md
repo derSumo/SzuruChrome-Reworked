@@ -14,11 +14,12 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 | Feature | Description |
 |---|---|
 | **Right-Click Quick Import** | Right-click any booru page → "Import to selected Szuru instance" — imports instantly without opening the popup. |
-| **Hotkey Import** | Configure a custom keyboard shortcut to import the current page with one keypress. |
-| **Import + Link Last Hotkey** | A second configurable hotkey imports the current page and links it with the previously uploaded post. Consecutive uses build a link-chain. |
+| **Native Quick Import Shortcut** | A browser-native command imports the current page with one keypress; rebind or disable it in `chrome://extensions/shortcuts`. |
+| **Import + Link Last Shortcut** | A second browser-native command imports the current page and links it with the previously uploaded post. Consecutive uses build a link-chain. |
 | **Batch Import** | On booru listing/gallery pages a launcher lets you select many posts and import them all at once — each is opened in a background tab, scraped, uploaded and closed, with a live progress bar. |
 | **Pool Import** | Enter a pool name before starting a batch and every imported post is added to that szurubooru pool, in selection order (creating the pool if it doesn't exist). |
-| **Sequential Import Queue** | Hotkey, context-menu and link-chain imports process strictly one after another, with automatic retry of transient failures (network drops, timeouts, HTTP 429/5xx). The queue survives a Chrome MV3 service-worker restart mid-burst. |
+| **Sequential Import Queue** | Keyboard-command, context-menu and link-chain imports process strictly one after another, with automatic retry of transient failures (network drops, timeouts, HTTP 429/5xx). The queue survives a Chrome MV3 service-worker restart mid-burst. |
+| **Per-site source access** | The scraper and page UI run only on source sites explicitly enabled in Options; no permanent all-sites host permission is requested. |
 | **Auto-Relations** | After upload a reverse-image search runs automatically; posts above the configurable similarity threshold (default **60%**) are linked as relations. Toggle in Settings → General. |
 | **Exact-Duplicate Handling** | For 100% matches the higher-quality file is kept and tags/sources are merged instead of creating a duplicate. |
 
@@ -35,6 +36,7 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 | Feature | Description |
 |---|---|
 | **"Already Imported" Badge** | A small pill on booru pages whose source already exists in your instance, linking to the post — no need to open the popup to check. |
+| **Toolbar Badge** | The extension icon shows active/queued import count, or a check mark for an already imported page. |
 | **Statistics Tab** | Imports, duplicates, failures, success rate, transferred volume, a 30-day activity chart and per-host / per-instance breakdown — plus a list of failed imports you can retry with one click. |
 | **Config Export / Import** | Export all settings to a JSON file (optionally without auth tokens) and restore them — handy across browsers and profiles. |
 | **Glass Notify Toasts** | Import status notifications in a modern glassmorphism style with progress, download speed and a compact completion history. |
@@ -44,7 +46,7 @@ Browser extension (Chrome / Firefox / Waterfox) for importing media from various
 | Fix | Description |
 |---|---|
 | **403 / CDN hotlink protection** | Content uploads include credentials and Referer, with a multi-strategy CDN fetch (page-context fetch, credentials + Referer, XHR) and per-request CORS injection. |
-| **MV3 FormData upload** | Temp-file uploads use native `fetch()` instead of the Axios fetch adapter, which silently failed on multipart uploads in Chrome/Brave service workers. |
+| **Native HTTP client** | All szurubooru API calls use native `fetch()` and `AbortController`; Axios is no longer bundled. |
 | **Octet-Stream / ArrayBuffer** | Binary data is base64-encoded during message passing to survive MV3 serialization; missing MIME types are detected from the file extension. |
 | **Filename Preservation** | Uploaded files retain their original filename from the source URL. |
 
@@ -132,11 +134,12 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 | Feature | Beschreibung |
 |---|---|
 | **Rechtsklick Quick Import** | Rechtsklick auf jeder Booru-Seite → "Zur gewählten Szuru-Instanz importieren" — importiert sofort ohne das Popup zu öffnen. |
-| **Hotkey Import** | Konfigurierbare Tastenkombination zum sofortigen Import der aktuellen Seite. |
-| **Import + letzten Post verknüpfen** | Ein zweites Tastenkürzel importiert die aktuelle Seite und verknüpft sie mit dem zuvor hochgeladenen Post. Mehrfach-Nutzung bildet eine Verknüpfungskette. |
+| **Nativer Quick-Import-Shortcut** | Ein browsernatives Kommando importiert die aktuelle Seite per Tastenkürzel; unter `chrome://extensions/shortcuts` umbelegbar oder deaktivierbar. |
+| **Import + letzten Post verknüpfen** | Ein zweites browsernatives Kommando importiert die aktuelle Seite und verknüpft sie mit dem zuvor hochgeladenen Post. Mehrfach-Nutzung bildet eine Verknüpfungskette. |
 | **Batch-Import** | Auf Listen-/Galerie-Seiten erscheint ein Starter, mit dem du viele Posts auswählen und auf einmal importieren kannst — jeder wird in einem Hintergrund-Tab geöffnet, gescrapt, hochgeladen und geschlossen, mit Live-Fortschritt. |
 | **Pool-Import** | Vor dem Batch einen Pool-Namen eingeben, und jeder importierte Post wird in Auswahlreihenfolge diesem szurubooru-Pool hinzugefügt (wird angelegt, falls nicht vorhanden). |
-| **Sequentielle Warteschlange** | Hotkey-, Kontextmenü- und Ketten-Importe laufen strikt nacheinander, mit automatischer Wiederholung vorübergehender Fehler (Netzwerkabbruch, Timeout, HTTP 429/5xx). Die Queue übersteht einen MV3-Service-Worker-Neustart mitten in einer Serie. |
+| **Sequentielle Warteschlange** | Tastenkürzel-, Kontextmenü- und Ketten-Importe laufen strikt nacheinander, mit automatischer Wiederholung vorübergehender Fehler (Netzwerkabbruch, Timeout, HTTP 429/5xx). Die Queue übersteht einen MV3-Service-Worker-Neustart mitten in einer Serie. |
+| **Quellseiten pro Opt-in** | Scraper und Seiten-UI laufen nur auf Quellseiten, die explizit in den Optionen aktiviert wurden; es wird keine dauerhafte Berechtigung für alle Websites angefordert. |
 | **Auto-Relationen** | Nach dem Upload läuft automatisch eine Reverse-Image-Suche; Posts über dem konfigurierbaren Schwellwert (Standard **60%**) werden als Relationen verknüpft. Umschaltbar unter Einstellungen → Allgemein. |
 | **Exakte-Duplikat-Behandlung** | Bei 100%-Treffern wird die höherwertige Datei behalten und Tags/Quellen werden zusammengeführt, statt ein Duplikat anzulegen. |
 
@@ -153,6 +156,7 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 | Feature | Beschreibung |
 |---|---|
 | **"Bereits importiert"-Badge** | Eine kleine Pille auf Booru-Seiten, deren Quelle schon in deiner Instanz existiert, mit Link zum Post — kein Popup-Öffnen zum Nachsehen nötig. |
+| **Toolbar-Badge** | Das Erweiterungs-Icon zeigt die Zahl aktiver/wartender Importe oder einen Haken für bereits importierte Seiten. |
 | **Statistik-Tab** | Importe, Duplikate, Fehler, Erfolgsquote, übertragenes Volumen, 30-Tage-Diagramm und Aufschlüsselung pro Host / Instanz — plus eine Liste fehlgeschlagener Importe, die sich mit einem Klick wiederholen lassen. |
 | **Konfiguration Export / Import** | Alle Einstellungen als JSON exportieren (optional ohne Auth-Tokens) und wiederherstellen — praktisch über Browser und Profile hinweg. |
 | **Glass-Benachrichtigungs-Toasts** | Import-Status im modernen Glasmorphismus mit Fortschritt, Download-Geschwindigkeit und kompaktem Verlauf. |
@@ -162,7 +166,7 @@ Browser-Extension (Chrome / Firefox / Waterfox) zum Importieren von Medien von v
 | Fix | Beschreibung |
 |---|---|
 | **403 / CDN-Hotlink-Schutz** | Content-Uploads enthalten Credentials und Referer, mit Multi-Strategie-CDN-Fetch (Page-Context-Fetch, Credentials + Referer, XHR) und CORS-Injektion pro Request. |
-| **MV3 FormData-Upload** | Temp-Datei-Uploads nutzen natives `fetch()` statt des Axios-Fetch-Adapters, der bei Multipart-Uploads in Chrome/Brave-Service-Workern still fehlschlug. |
+| **Nativer HTTP-Client** | Alle szurubooru-API-Aufrufe nutzen natives `fetch()` und `AbortController`; Axios wird nicht mehr gebündelt. |
 | **Octet-Stream / ArrayBuffer** | Binärdaten werden bei der Nachrichtenübermittlung base64-kodiert, um MV3-Serialisierung zu überleben; fehlende MIME-Typen werden aus der Dateiendung erkannt. |
 | **Dateinamen-Erhaltung** | Hochgeladene Dateien behalten ihren originalen Dateinamen aus der Quell-URL. |
 

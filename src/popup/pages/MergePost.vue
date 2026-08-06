@@ -5,8 +5,11 @@ import { Post, UpdatePostRequest } from "~/api/models";
 import { isMobile } from "~/env";
 import { BrowserCommand, PostUpdateCommandData, TagDetails } from "~/models";
 import { cfg, useMergeStore, usePopupStore } from "~/stores";
-import { emptyPost, ensurePostHasContentToken, getErrorMessage, getUrl } from "~/utils";
-import { useI18n, setLanguage, Language } from "~/i18n";
+import { emptyPost, getErrorMessage } from "~/utils";
+import { getUrl } from "~/shared/host";
+import { ensurePostHasContentToken } from "../contentToken";
+import { setLanguage, Language } from "~/i18n";
+import { useI18n } from "~/i18n/vue";
 
 const props = defineProps(["siteId", "postId"]);
 const merge = useMergeStore();
