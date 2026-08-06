@@ -67,7 +67,7 @@ export default {
   // Listen-Seiten
   "options.listing.title": "Listen-Seiten",
   "options.listing.hoverActions": "Import-Buttons auf Thumbnails",
-  "options.listing.hoverActionsHint": "Halte Strg gedrückt und fahre über ein Thumbnail, um zwei Buttons zu sehen: diesen Post importieren, oder importieren und als Relation mit dem vorherigen Import verknüpfen. Der Post wird im Hintergrund geladen, gescrapt und hochgeladen — du bleibst auf der Liste.",
+  "options.listing.hoverActionsHint": "Beim Überfahren eines Thumbnails erscheinen zwei Buttons: diesen Post importieren, oder importieren und als Relation mit dem vorherigen Import verknüpfen. Der Post wird im Hintergrund geladen, gescrapt und hochgeladen — du bleibst auf der Liste.",
   "options.listing.endlessScroll": "Endless Scroll",
   "options.listing.endlessScrollHint": "Hängt die nächste Seite an, sobald du dich dem Ende näherst, statt dich durch die Pagination klicken zu lassen. Auswahl, Häkchen und Hover-Buttons funktionieren auf den angehängten Posts genauso.",
   "options.listing.hoverZoom": "Thumbnails beim Überfahren vergrößern",
@@ -300,6 +300,10 @@ export default {
   "changelog.title": "Changelog",
 
   "changelog.v302.date": "August 2026",
+  "changelog.v303.date": "August 2026",
+  "changelog.v303.ctrlHover": "Vorschau folgt dem Cursor",
+  "changelog.v303.ctrlHoverDesc": "Import-Buttons erscheinen wieder direkt beim Überfahren. Nur die kompaktere Thumbnail-Vorschau braucht Strg, folgt dem Cursor und blendet sanft ein.",
+
   "changelog.v302.ctrlHover": "Bewusste Hover-Aktionen",
   "changelog.v302.ctrlHoverDesc": "Import-Buttons und die große Thumbnail-Vorschau werden erst mit gedrückter Strg-Taste geöffnet. Bereits eingeblendete Import-Buttons bleiben danach normal bedienbar.",
 

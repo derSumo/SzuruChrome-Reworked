@@ -67,7 +67,7 @@ export default {
   // Listing pages
   "options.listing.title": "Listing pages",
   "options.listing.hoverActions": "Import buttons on thumbnails",
-  "options.listing.hoverActionsHint": "Hold Ctrl while hovering a thumbnail to show two buttons: import this post, or import it and link it to the previous import as a relation. The post is loaded, scraped and uploaded in the background — you stay on the listing.",
+  "options.listing.hoverActionsHint": "Hovering a thumbnail shows two buttons: import this post, or import it and link it to the previous import as a relation. The post is loaded, scraped and uploaded in the background — you stay on the listing.",
   "options.listing.endlessScroll": "Endless scroll",
   "options.listing.endlessScrollHint": "Appends the next page to the current one as you approach the bottom, instead of making you click through the pagination. Selection, thumbnail marks and hover buttons keep working on the appended posts.",
   "options.listing.hoverZoom": "Enlarge thumbnails on hover",
@@ -300,6 +300,10 @@ export default {
   "changelog.title": "Changelog",
 
   "changelog.v302.date": "August 2026",
+  "changelog.v303.date": "August 2026",
+  "changelog.v303.ctrlHover": "Preview follows the cursor",
+  "changelog.v303.ctrlHoverDesc": "Import buttons appear directly on hover again. Only the more compact thumbnail preview needs Ctrl; it follows the cursor and fades in smoothly.",
+
   "changelog.v302.ctrlHover": "Deliberate hover actions",
   "changelog.v302.ctrlHoverDesc": "Import buttons and the large thumbnail preview only open while Ctrl is held. Once shown, import buttons remain normally clickable.",
 

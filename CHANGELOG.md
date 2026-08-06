@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.3] – August 2026
+
+### Changed
+
+- Thumbnail import buttons are available directly on hover again. The Ctrl-gated enlarged preview is more compact, follows the cursor, and fades in smoothly.
+
 ## [3.0.2] – August 2026
 
 ### Changed
