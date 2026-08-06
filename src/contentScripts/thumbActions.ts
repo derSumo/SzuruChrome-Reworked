@@ -58,6 +58,7 @@ let barAnchor: HTMLAnchorElement | undefined;
 let showTimer: ReturnType<typeof setTimeout> | undefined;
 let installed = false;
 let enabled = false;
+let lastHoveredTarget: EventTarget | null = null;
 
 function escapeAttr(value: string): string {
   return value.replace(/[&<>"']/g, (c) => (
@@ -138,10 +139,8 @@ function postAnchorFrom(target: EventTarget | null): { anchor: HTMLAnchorElement
   return url ? { anchor, url } : undefined;
 }
 
-function onPointerOver(event: MouseEvent): void {
-  if (!enabled) return;
-
-  const hit = postAnchorFrom(event.target);
+function revealForTarget(target: EventTarget | null): void {
+  const hit = postAnchorFrom(target);
   if (!hit) return;
 
   // Same thumbnail (or its own bar): just wake the bar back up.
@@ -155,6 +154,24 @@ function onPointerOver(event: MouseEvent): void {
     showTimer = undefined;
     showBar(hit.anchor, hit.url);
   }, SHOW_DELAY_MS);
+}
+
+function onPointerOver(event: MouseEvent): void {
+  lastHoveredTarget = event.target;
+  if (!enabled || !event.ctrlKey) return;
+  revealForTarget(event.target);
+}
+
+/** Let Ctrl pressed after arriving on a thumbnail reveal its actions as well. */
+function onKeyDown(event: KeyboardEvent): void {
+  if (!enabled || event.key !== "Control" || event.repeat) return;
+  revealForTarget(lastHoveredTarget);
+}
+
+function onKeyUp(event: KeyboardEvent): void {
+  if (event.key !== "Control" || !showTimer) return;
+  clearTimeout(showTimer);
+  showTimer = undefined;
 }
 
 function onPointerOut(event: MouseEvent): void {
@@ -186,6 +203,8 @@ export function installThumbActions(): void {
 
   document.addEventListener("mouseover", onPointerOver, true);
   document.addEventListener("mouseout", onPointerOut, true);
+  document.addEventListener("keydown", onKeyDown, true);
+  document.addEventListener("keyup", onKeyUp, true);
   document.addEventListener("click", onDocumentClick, true);
   onNavigation(() => { removeBar(); void refresh(); });
   onConfigReloaded(() => void refresh());

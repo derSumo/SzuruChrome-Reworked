@@ -67,11 +67,11 @@ export default {
   // Listen-Seiten
   "options.listing.title": "Listen-Seiten",
   "options.listing.hoverActions": "Import-Buttons auf Thumbnails",
-  "options.listing.hoverActionsHint": "Beim Überfahren eines Thumbnails erscheinen zwei Buttons: diesen Post importieren, oder importieren und als Relation mit dem vorherigen Import verknüpfen. Der Post wird im Hintergrund geladen, gescrapt und hochgeladen — du bleibst auf der Liste.",
+  "options.listing.hoverActionsHint": "Halte Strg gedrückt und fahre über ein Thumbnail, um zwei Buttons zu sehen: diesen Post importieren, oder importieren und als Relation mit dem vorherigen Import verknüpfen. Der Post wird im Hintergrund geladen, gescrapt und hochgeladen — du bleibst auf der Liste.",
   "options.listing.endlessScroll": "Endless Scroll",
   "options.listing.endlessScrollHint": "Hängt die nächste Seite an, sobald du dich dem Ende näherst, statt dich durch die Pagination klicken zu lassen. Auswahl, Häkchen und Hover-Buttons funktionieren auf den angehängten Posts genauso.",
   "options.listing.hoverZoom": "Thumbnails beim Überfahren vergrößern",
-  "options.listing.hoverZoomHint": "Zeigt eine große Vorschau des Bildes unter dem Cursor. Die Datei in voller Größe wird aus der Post-Seite selbst gelesen, die Vorschau ist also scharf — das kostet eine Anfrage pro Post, deshalb ist es standardmäßig aus.",
+  "options.listing.hoverZoomHint": "Halte Strg gedrückt und fahre über ein Thumbnail, um eine große Vorschau zu sehen. Die Datei in voller Größe wird aus der Post-Seite selbst gelesen, die Vorschau ist also scharf — das kostet eine Anfrage pro Post, deshalb ist es standardmäßig aus.",
   "options.listing.hoverZoomScope": "Wo",
   "options.listing.hoverZoomScopeHint": "Entweder auf allen unterstützten Quellseiten oder nur auf den unten gelisteten.",
   "options.listing.hoverZoomScopeSites": "Nur die Seiten unten",
@@ -298,6 +298,10 @@ export default {
 
   // ── Changelog ─────────────────────────────────────────
   "changelog.title": "Changelog",
+
+  "changelog.v302.date": "August 2026",
+  "changelog.v302.ctrlHover": "Bewusste Hover-Aktionen",
+  "changelog.v302.ctrlHoverDesc": "Import-Buttons und die große Thumbnail-Vorschau werden erst mit gedrückter Strg-Taste geöffnet. Bereits eingeblendete Import-Buttons bleiben danach normal bedienbar.",
 
   "changelog.v301.date": "August 2026",
   "changelog.v301.listingFlow": "Robusterer und transparenterer Listen-Import",

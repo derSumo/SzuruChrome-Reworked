@@ -48,6 +48,7 @@ let openTimer: ReturnType<typeof setTimeout> | undefined;
 let installed = false;
 let enabled = false;
 let delayMs = 350;
+let lastHoveredTarget: EventTarget | null = null;
 
 /** Media URL per post page, so re-hovering the same thumbnail is free. */
 const mediaCache = new Map<string, ResolvedMedia | null>();
@@ -134,10 +135,8 @@ async function open(anchor: HTMLAnchorElement, url: string): Promise<void> {
   panel.appendChild(el);
 }
 
-function onPointerOver(event: MouseEvent): void {
-  if (!enabled) return;
-
-  const anchor = (event.target as HTMLElement)?.closest?.("a") as HTMLAnchorElement | null;
+function previewForTarget(target: EventTarget | null): void {
+  const anchor = (target as HTMLElement)?.closest?.("a") as HTMLAnchorElement | null;
   if (!anchor || !anchor.querySelector("img")) return;
   const url = normalizePostUrl(anchor.href, window.location.href);
   if (!url || url === hoveredUrl) return;
@@ -148,6 +147,22 @@ function onPointerOver(event: MouseEvent): void {
     openTimer = undefined;
     if (hoveredUrl === url) void open(anchor, url);
   }, delayMs);
+}
+
+function onPointerOver(event: MouseEvent): void {
+  lastHoveredTarget = event.target;
+  if (!enabled || !event.ctrlKey) return;
+  previewForTarget(event.target);
+}
+
+/** Ctrl can be pressed after the pointer has already reached a thumbnail. */
+function onKeyDown(event: KeyboardEvent): void {
+  if (!enabled || event.key !== "Control" || event.repeat) return;
+  previewForTarget(lastHoveredTarget);
+}
+
+function onKeyUp(event: KeyboardEvent): void {
+  if (event.key === "Control") close();
 }
 
 function onPointerOut(event: MouseEvent): void {
@@ -172,6 +187,8 @@ export function installHoverZoom(): void {
 
   document.addEventListener("mouseover", onPointerOver, true);
   document.addEventListener("mouseout", onPointerOut, true);
+  document.addEventListener("keydown", onKeyDown, true);
+  document.addEventListener("keyup", onKeyUp, true);
   // A panel pinned next to a thumbnail that scrolled away would float over
   // nothing.
   window.addEventListener("scroll", () => { if (previewEl) close(); }, { passive: true, capture: true });

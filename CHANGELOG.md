@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.2] – August 2026
+
+### Changed
+
+- Hover tools now require holding **Ctrl**: this applies to both the thumbnail import buttons and the enlarged preview. Import buttons remain clickable after they are revealed.
+
 ## [3.0.1] – August 2026
 
 ### Changed
