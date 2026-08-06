@@ -76,6 +76,8 @@ let observer: IntersectionObserver | undefined;
 let flushTimer: ReturnType<typeof setTimeout> | undefined;
 let installed = false;
 let enabled = false;
+/** Invalidates in-flight lookups when a listing or its settings change. */
+let lookupGeneration = 0;
 
 function ensureStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
@@ -161,20 +163,23 @@ async function flushPending(): Promise<void> {
   const urls = [...pendingUrls].slice(0, MAX_URLS_PER_REQUEST);
   if (urls.length === 0) return;
   for (const url of urls) pendingUrls.delete(url);
+  const generation = lookupGeneration;
 
   try {
     const answers: Record<string, any> = await browser.runtime.sendMessage(
       new BrowserCommand("check_imported_bulk", { pageUrls: urls }),
     );
+    if (generation !== lookupGeneration || !enabled) return;
     for (const url of urls) applyResult(url, answers?.[url] ?? { unavailable: true });
   } catch {
+    if (generation !== lookupGeneration || !enabled) return;
     // Background unreachable (worker restarting). Treat it like any other
     // failed lookup so the spinners stop and the thumbnails can be retried.
     for (const url of urls) applyResult(url, { imported: false, unavailable: true });
   }
 
   // More arrived while the request was in flight.
-  if (pendingUrls.size > 0) scheduleFlush();
+  if (generation === lookupGeneration && pendingUrls.size > 0) scheduleFlush();
 }
 
 function scheduleFlush(): void {
@@ -208,11 +213,27 @@ function onIntersect(entries: IntersectionObserverEntry[]): void {
   }
 }
 
+/**
+ * Post anchors within `root`, including `root` itself when an entire thumbnail
+ * wrapper was added in one mutation.
+ */
+function thumbnailAnchors(root: ParentNode): HTMLAnchorElement[] {
+  const anchors: HTMLAnchorElement[] = [];
+  if (root instanceof HTMLAnchorElement && root.matches("a[href]")) anchors.push(root);
+  if (root instanceof Element) {
+    const parentAnchor = root.closest<HTMLAnchorElement>("a[href]");
+    if (parentAnchor) anchors.push(parentAnchor);
+  }
+  anchors.push(...Array.from(root.querySelectorAll<HTMLAnchorElement>("a[href]")));
+  return anchors;
+}
+
 /** Register post thumbnails that aren't being watched yet; returns how many. */
-function scanThumbnails(): number {
+function scanThumbnails(root: ParentNode = document): number {
   if (!enabled || !observer) return 0;
   let added = 0;
-  for (const anchor of Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
+  for (const anchor of thumbnailAnchors(root)) {
+    if (!anchor.isConnected) continue;
     if (!anchor.querySelector("img")) continue;
     const url = normalizePostUrl(anchor.href, window.location.href);
     if (!url) continue;
@@ -235,20 +256,43 @@ let mutationWatcher: MutationObserver | undefined;
 function watchForNewThumbnails(): void {
   if (mutationWatcher) return;
   let rescanTimer: ReturnType<typeof setTimeout> | undefined;
-  mutationWatcher = new MutationObserver(() => {
+  const pendingRoots = new Set<ParentNode>();
+  mutationWatcher = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of Array.from(mutation.addedNodes)) {
+        if (node instanceof Element) pendingRoots.add(node);
+      }
+    }
+    if (pendingRoots.size === 0) return;
     if (rescanTimer !== undefined) return;
-    rescanTimer = setTimeout(() => { rescanTimer = undefined; scanThumbnails(); }, 400);
+    rescanTimer = setTimeout(() => {
+      rescanTimer = undefined;
+      // Endless scroll used to trigger a complete document scan here. On a
+      // long listing that gets slower with every page; inspect just the newly
+      // appended thumbnail wrappers instead.
+      for (const root of pendingRoots) scanThumbnails(root);
+      pendingRoots.clear();
+    }, 80);
   });
   mutationWatcher.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 async function refresh(): Promise<void> {
+  const refreshGeneration = ++lookupGeneration;
+  if (flushTimer !== undefined) clearTimeout(flushTimer);
+  flushTimer = undefined;
+  pendingUrls.clear();
+  watchedAnchors.clear();
+  // A virtual navigation replaces thumbnails without unloading this script.
+  // Disconnecting drops the old element references before scanning the new DOM.
+  observer?.disconnect();
+  observer = undefined;
+
   const settings = await getBadgeSettings();
+  if (refreshGeneration !== lookupGeneration) return;
   enabled = settings.enabled && settings.thumbnails;
 
   if (!enabled) {
-    observer?.disconnect();
-    observer = undefined;
     mutationWatcher?.disconnect();
     mutationWatcher = undefined;
     clearMarks();

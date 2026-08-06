@@ -17,24 +17,34 @@ import { onNavigation } from "../navigation";
 const SENTINEL_ID = "szuru-endless-sentinel";
 const STYLE_ID = "szuru-endless-style";
 
-/** Start fetching this far before the sentinel is actually on screen. */
-const PREFETCH_MARGIN = "800px";
-/** Politeness gap between two page loads. */
-const PAGE_DELAY_MS = 300;
+/** Start fetching far enough ahead that scrolling does not hit a blank end. */
+const PREFETCH_MARGIN = "1400px";
 const FETCH_TIMEOUT_MS = 20_000;
 /** Hard stop, so an infinite listing cannot grow the DOM without bound. */
 const MAX_PAGES = 40;
 
 const STYLES = `
   #${SENTINEL_ID}{display:flex;align-items:center;justify-content:center;gap:8px;
-    width:100%;padding:18px 8px;box-sizing:border-box;
+    width:100%;min-height:48px;padding:14px 8px;box-sizing:border-box;
     font:500 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-    color:rgba(140,140,160,.9);}
+    color:rgba(140,140,160,.92);font-variant-numeric:tabular-nums;
+    transition:color .2s ease,opacity .2s ease;}
+  #${SENTINEL_ID} .szes-track{position:relative;width:32px;height:4px;overflow:hidden;
+    border-radius:999px;background:rgba(140,140,160,.2)}
+  #${SENTINEL_ID} .szes-track::after{content:"";position:absolute;inset:0;width:45%;
+    border-radius:inherit;background:rgba(140,180,255,.95);animation:szes-sweep 1.05s ease-in-out infinite}
   #${SENTINEL_ID} .szes-spin{width:15px;height:15px;border-radius:50%;
     border:2px solid rgba(140,140,160,.35);border-top-color:rgba(140,140,160,.95);
     animation:szes-spin .7s linear infinite}
+  #${SENTINEL_ID} .szes-retry{margin-left:4px;padding:4px 8px;border:1px solid rgba(140,180,255,.38);
+    border-radius:999px;background:rgba(105,145,220,.13);color:inherit;font:inherit;cursor:pointer;
+    transition:background .15s ease,border-color .15s ease}
+  #${SENTINEL_ID} .szes-retry:hover{background:rgba(105,145,220,.26);border-color:rgba(140,180,255,.72)}
+  #${SENTINEL_ID}.is-end{color:rgba(120,190,145,.9)}
+  #${SENTINEL_ID}.is-error{color:rgba(240,150,140,.96)}
   @keyframes szes-spin{to{transform:rotate(360deg)}}
-  @media (prefers-reduced-motion:reduce){#${SENTINEL_ID} .szes-spin{animation:none}}
+  @keyframes szes-sweep{from{transform:translateX(-120%)}to{transform:translateX(280%)}}
+  @media (prefers-reduced-motion:reduce){#${SENTINEL_ID} .szes-spin,#${SENTINEL_ID} .szes-track::after{animation:none}}
 `;
 
 let observer: IntersectionObserver | undefined;
@@ -45,6 +55,8 @@ let loading = false;
 let pagesLoaded = 0;
 let installed = false;
 let enabled = false;
+let generation = 0;
+let loadController: AbortController | undefined;
 
 /** URLs already on the page, so an overlapping next page adds nothing twice. */
 const seenPosts = new Set<string>();
@@ -81,27 +93,54 @@ function findGrid(root: Document, pageUrl: string): HTMLElement | undefined {
   return undefined;
 }
 
-function setSentinel(state: "idle" | "loading" | "end" | "error"): void {
+function sentinelText(key: "batch.moreLoading" | "batch.moreReady" | "batch.moreEnd" | "batch.moreFailed", fallback: string): string {
+  return t(key, { pages: pagesLoaded, page: pagesLoaded + 1, posts: seenPosts.size }) || fallback;
+}
+
+function retry(): void {
+  if (!sentinel || !nextUrl || !container || loading) return;
+  observer?.observe(sentinel);
+  void loadNextPage();
+}
+
+function setSentinel(state: "ready" | "loading" | "end" | "error"): void {
   if (!sentinel) return;
+  sentinel.classList.toggle("is-end", state === "end");
+  sentinel.classList.toggle("is-error", state === "error");
+  sentinel.replaceChildren();
+
+  const label = document.createElement("span");
   switch (state) {
     case "loading":
-      sentinel.innerHTML = `<span class="szes-spin"></span><span>${t("batch.moreLoading") || "Loading next page…"}</span>`;
+      sentinel.insertAdjacentHTML("beforeend", '<span class="szes-spin" aria-hidden="true"></span>');
+      label.textContent = sentinelText("batch.moreLoading", `Loading page ${pagesLoaded + 1}…`);
+      break;
+    case "ready":
+      sentinel.insertAdjacentHTML("beforeend", '<span class="szes-track" aria-hidden="true"></span>');
+      label.textContent = sentinelText("batch.moreReady", `${pagesLoaded} pages loaded · keep scrolling`);
       break;
     case "end":
-      sentinel.textContent = t("batch.moreEnd") || "End of the listing";
+      label.textContent = sentinelText("batch.moreEnd", `End of the listing · ${seenPosts.size} posts loaded`);
       break;
-    case "error":
-      sentinel.textContent = t("batch.moreFailed") || "Could not load the next page";
-      break;
-    default:
-      sentinel.textContent = "";
+    case "error": {
+      label.textContent = sentinelText("batch.moreFailed", "Could not load the next page");
+      const button = document.createElement("button");
+      button.className = "szes-retry";
+      button.type = "button";
+      button.textContent = t("batch.moreRetry") || "Retry";
+      button.addEventListener("click", retry);
+      sentinel.append(label, button);
+      return;
+    }
   }
+  sentinel.appendChild(label);
 }
 
 function stop(state: "end" | "error"): void {
   observer?.disconnect();
   setSentinel(state);
-  nextUrl = undefined;
+  // An error can be retried without making the user reload the whole listing.
+  if (state === "end") nextUrl = undefined;
 }
 
 async function loadNextPage(): Promise<void> {
@@ -109,16 +148,28 @@ async function loadNextPage(): Promise<void> {
   if (pagesLoaded >= MAX_PAGES) { stop("end"); return; }
 
   loading = true;
+  const loadGeneration = generation;
   const url = nextUrl;
+  const target = container;
+  const controller = new AbortController();
+  loadController = controller;
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, FETCH_TIMEOUT_MS);
   setSentinel("loading");
 
   try {
     const response = await fetch(url, {
       credentials: "same-origin",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: controller.signal,
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+    // A pjax navigation/config change may have started a newer listing while
+    // this response was in flight. Never append an old page into that listing.
+    if (loadGeneration !== generation || controller.signal.aborted) return;
 
     const fetchedUrls = extractPostUrls(doc, url);
     if (fetchedUrls.length === 0) { stop("end"); return; }
@@ -127,6 +178,7 @@ async function loadNextPage(): Promise<void> {
     // intact, and adoption keeps event-less markup working in this document.
     const grid = findGrid(doc, url);
     let appended = 0;
+    const fragment = document.createDocumentFragment();
     for (const anchor of postAnchors(grid ?? doc, url)) {
       const postUrl = normalizePostUrl(anchor.getAttribute("href") ?? "", url);
       if (!postUrl || seenPosts.has(postUrl)) continue;
@@ -139,24 +191,34 @@ async function loadNextPage(): Promise<void> {
         : anchor;
       const node = document.importNode(source, true);
       absolutizeUrls(node as HTMLElement, url);
-      container.appendChild(node);
+      // The next page may be well below the viewport. Let the browser defer
+      // its image requests instead of competing with the thumbnails in view.
+      for (const image of Array.from((node as HTMLElement).querySelectorAll<HTMLImageElement>("img"))) {
+        if (!image.hasAttribute("loading")) image.loading = "lazy";
+      }
+      fragment.appendChild(node);
       appended++;
     }
 
     pagesLoaded++;
     if (appended === 0) { stop("end"); return; }
 
+    // One insertion avoids a layout/repaint cycle for every single thumbnail.
+    target.appendChild(fragment);
     nextUrl = pickNextPageUrl(url, nextPageCandidates(doc));
     if (!nextUrl) { stop("end"); return; }
 
-    setSentinel("idle");
+    setSentinel("ready");
     // Keep the sentinel last so it stays below everything just added.
-    container.parentElement?.appendChild(sentinel!);
-    await new Promise((resolve) => setTimeout(resolve, PAGE_DELAY_MS));
+    target.parentElement?.appendChild(sentinel!);
   } catch {
-    stop("error");
+    // Refreshes cancel the old request silently; a real timeout remains
+    // visible and retryable instead of leaving the sentinel stuck on loading.
+    if (loadGeneration === generation && (!controller.signal.aborted || timedOut)) stop("error");
   } finally {
-    loading = false;
+    clearTimeout(timeout);
+    if (loadController === controller) loadController = undefined;
+    if (loadGeneration === generation) loading = false;
   }
 }
 
@@ -179,6 +241,9 @@ function absolutizeUrls(root: HTMLElement, base: string): void {
 }
 
 async function refresh(): Promise<void> {
+  generation++;
+  loadController?.abort();
+  loadController = undefined;
   observer?.disconnect();
   observer = undefined;
   sentinel?.remove();
@@ -194,15 +259,18 @@ async function refresh(): Promise<void> {
   container = findGrid(document, window.location.href);
   if (!container) return;
 
-  nextUrl = pickNextPageUrl(window.location.href, nextPageCandidates(document));
-  if (!nextUrl) return;
-
   for (const url of extractPostUrls(document, window.location.href)) seenPosts.add(url);
 
   ensureStyles();
   sentinel = document.createElement("div");
   sentinel.id = SENTINEL_ID;
+  sentinel.setAttribute("role", "status");
+  sentinel.setAttribute("aria-live", "polite");
   (container.parentElement ?? container).appendChild(sentinel);
+
+  nextUrl = pickNextPageUrl(window.location.href, nextPageCandidates(document));
+  if (!nextUrl) { setSentinel("end"); return; }
+  setSentinel("ready");
 
   observer = new IntersectionObserver((entries) => {
     if (entries.some((e) => e.isIntersecting)) void loadNextPage();

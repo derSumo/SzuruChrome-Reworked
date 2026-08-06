@@ -256,10 +256,18 @@ function recordSelected(url: string, selected: boolean): void {
 
 // ── Candidate detection ───────────────────────────────────────────────
 
-function findPostAnchors(): HTMLAnchorElement[] {
+function postAnchorsIn(root: ParentNode = document): HTMLAnchorElement[] {
   const seen = new Set<string>();
   const anchors: HTMLAnchorElement[] = [];
-  for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
+  const candidates: HTMLAnchorElement[] = [];
+  if (root instanceof HTMLAnchorElement && root.matches("a[href]")) candidates.push(root);
+  if (root instanceof Element) {
+    const parentAnchor = root.closest<HTMLAnchorElement>("a[href]");
+    if (parentAnchor) candidates.push(parentAnchor);
+  }
+  candidates.push(...Array.from(root.querySelectorAll<HTMLAnchorElement>("a[href]")));
+
+  for (const a of candidates) {
     if (!a.querySelector("img")) continue;
     if (!isPostDetailUrl(a.href, window.location.href)) continue;
     const key = normalizePostUrl(a.href, window.location.href);
@@ -268,6 +276,10 @@ function findPostAnchors(): HTMLAnchorElement[] {
     anchors.push(a);
   }
   return anchors;
+}
+
+function findPostAnchors(): HTMLAnchorElement[] {
+  return postAnchorsIn();
 }
 
 /** Anchor → the URL it contributes to the selection. */
@@ -319,6 +331,48 @@ function clearSelectionMarks(): void {
   for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>(`.${SELECTABLE_CLASS}`))) {
     a.classList.remove(SELECTABLE_CLASS, SELECTED_CLASS);
   }
+}
+
+/**
+ * Endless scroll appends nodes without a navigation event. While the picker is
+ * open, turn only those fresh nodes into selectable thumbnails; repeatedly
+ * searching a long, growing listing makes every append more expensive.
+ */
+let selectionWatcher: MutationObserver | undefined;
+let selectionRescanTimer: ReturnType<typeof setTimeout> | undefined;
+const selectionRoots = new Set<ParentNode>();
+
+function stopWatchingSelection(): void {
+  selectionWatcher?.disconnect();
+  selectionWatcher = undefined;
+  selectionRoots.clear();
+  if (selectionRescanTimer !== undefined) clearTimeout(selectionRescanTimer);
+  selectionRescanTimer = undefined;
+}
+
+function watchNewSelectionCandidates(): void {
+  if (selectionWatcher) return;
+  selectionWatcher = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of Array.from(mutation.addedNodes)) {
+        if (node instanceof Element) selectionRoots.add(node);
+      }
+    }
+    if (selectionRoots.size === 0 || selectionRescanTimer !== undefined) return;
+    selectionRescanTimer = setTimeout(() => {
+      selectionRescanTimer = undefined;
+      if (!batchSelectMode) return;
+      for (const root of selectionRoots) {
+        for (const anchor of postAnchorsIn(root)) {
+          anchor.classList.add(SELECTABLE_CLASS);
+          anchor.classList.toggle(SELECTED_CLASS, batchSelectedUrls.has(urlOfAnchor(anchor)));
+        }
+      }
+      selectionRoots.clear();
+      updateBatchToolbarCount();
+    }, 80);
+  });
+  selectionWatcher.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 // ── Launcher ──────────────────────────────────────────────────────────
@@ -545,6 +599,7 @@ function enterBatchSelectMode(selectAll = false, resumed = false): void {
   batchToolbar?.remove(); batchToolbar = undefined;
 
   for (const a of findPostAnchors()) a.classList.add(SELECTABLE_CLASS);
+  watchNewSelectionCandidates();
   document.addEventListener("click", onSelectClick, true);
 
   const bar = document.createElement("div");
@@ -600,6 +655,7 @@ function enterBatchSelectMode(selectAll = false, resumed = false): void {
 
 function exitBatchSelectMode(): void {
   batchSelectMode = false;
+  stopWatchingSelection();
   crawlAbort?.abort();
   crawlAbort = undefined;
   document.removeEventListener("click", onSelectClick, true);
@@ -691,6 +747,7 @@ async function startBatchImport(poolName?: string): Promise<void> {
   // Close the picker and hand the list over; the launcher comes straight back
   // so the next selection can be started while this batch runs.
   batchSelectMode = false;
+  stopWatchingSelection();
   crawlAbort?.abort();
   crawlAbort = undefined;
   document.removeEventListener("click", onSelectClick, true);
