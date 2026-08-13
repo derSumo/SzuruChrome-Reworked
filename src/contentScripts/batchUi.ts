@@ -24,6 +24,7 @@
 
 import { BrowserCommand } from "~/models";
 import { t } from "~/i18n";
+import { createWriteChain } from "~/shared/async";
 import { buildSearchUrl, isPostDetailUrl, normalizePostUrl } from "~/shared/listing";
 import { getBatchSettings, onConfigReloaded } from "./pageConfig";
 import { icon } from "./ui/icons";
@@ -231,6 +232,17 @@ function adoptSelection(state: BatchSelectionState | undefined): void {
   if (batchToolbar) refreshSelectionMarks();
 }
 
+// The basket's order is the order the batch imports in, so the deltas must
+// reach it in the order they were made. The debounce alone did not guarantee
+// that: `syncTimer` is cleared before the round trip, so the next batch of
+// clicks could schedule and send a second delta while the first was still in
+// flight — and whichever answered first won. A crawl adding a page every 400 ms
+// against a 300 ms debounce hit this constantly, which is why an otherwise
+// correctly reversed batch started with a couple of posts in listing order and
+// dropped a stray chunk at the end.
+const syncChain = createWriteChain();
+let flushesInFlight = 0;
+
 async function flushSelection(): Promise<void> {
   syncTimer = undefined;
   if (pendingAdd.size === 0 && pendingRemove.size === 0) return;
@@ -240,7 +252,16 @@ async function flushSelection(): Promise<void> {
   pendingAdd.clear();
   pendingRemove.clear();
 
-  adoptSelection(await sendSelectionCommand({ add, remove, active: batchSelectMode }));
+  flushesInFlight++;
+  try {
+    const state = await syncChain(() => sendSelectionCommand({ add, remove, active: batchSelectMode }));
+    // Only the last flush still running describes the whole basket; an earlier
+    // one's answer predates the deltas queued behind it and would drop them
+    // out of the local mirror until the next round trip.
+    if (flushesInFlight === 1) adoptSelection(state);
+  } finally {
+    flushesInFlight--;
+  }
 }
 
 function scheduleSelectionSync(): void {

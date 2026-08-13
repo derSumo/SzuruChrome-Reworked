@@ -302,6 +302,10 @@ export default {
   "changelog.title": "Changelog",
 
   "changelog.v302.date": "August 2026",
+  "changelog.v305.date": "August 2026",
+  "changelog.v305.selectionOrder": "Batches keep the order you picked in",
+  "changelog.v305.selectionOrderDesc": "The picker sends its picks to the background in batches, and a later one could overtake an earlier one — so \"All pages\" filled the basket in the order the round trips finished. The import order was reversed correctly, the list underneath it was not.",
+
   "changelog.v304.date": "August 2026",
   "changelog.v304.oldestFirst": "Batches import the oldest post first",
   "changelog.v304.oldestFirstDesc": "A listing runs newest → oldest while szurubooru shows the newest upload first, so importing a whole artist left their oldest work on top. The selection is now worked through back to front: the newest post is uploaded last and lands at the top. Pools keep their selection order.",

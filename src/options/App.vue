@@ -1255,6 +1255,13 @@ async function doResetStats() {
 
         <div class="card changelog-card">
           <div class="changelog-entry">
+            <div class="changelog-version">v3.0.5</div>
+            <div class="changelog-date">{{ t("changelog.v305.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v305.selectionOrder") }}</strong> — {{ t("changelog.v305.selectionOrderDesc") }}</li>
+            </ul>
+          </div>
+          <div class="changelog-entry">
             <div class="changelog-version">v3.0.4</div>
             <div class="changelog-date">{{ t("changelog.v304.date") }}</div>
             <ul class="changelog-list">

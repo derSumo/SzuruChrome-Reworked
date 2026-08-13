@@ -302,6 +302,10 @@ export default {
   "changelog.title": "Changelog",
 
   "changelog.v302.date": "August 2026",
+  "changelog.v305.date": "August 2026",
+  "changelog.v305.selectionOrder": "Batches behalten die Auswahl-Reihenfolge",
+  "changelog.v305.selectionOrderDesc": "Die Auswahl wird gebündelt an den Hintergrund geschickt, und ein späteres Bündel konnte ein früheres überholen — „Alle Seiten“ füllte den Korb also in der Reihenfolge, in der die Antworten zurückkamen. Umgedreht wurde korrekt, nur die Liste darunter stimmte nicht.",
+
   "changelog.v304.date": "August 2026",
   "changelog.v304.oldestFirst": "Batches importieren den ältesten Post zuerst",
   "changelog.v304.oldestFirstDesc": "Eine Liste läuft neu → alt, szurubooru zeigt den neuesten Upload zuerst — ein ganzer Künstler landete also mit den ältesten Werken oben. Die Auswahl wird jetzt von hinten nach vorne abgearbeitet: Der neueste Post wird zuletzt hochgeladen und steht damit oben. Pools behalten ihre Auswahl-Reihenfolge.",

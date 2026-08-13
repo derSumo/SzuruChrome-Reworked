@@ -12,6 +12,7 @@
 // Persisted into storage.session so an MV3 worker teardown mid-selection
 // doesn't empty the basket either.
 
+import { createWriteChain } from "~/shared/async";
 import { registrableDomainOfUrl } from "~/shared/host";
 
 export const BATCH_SELECTION_KEY = "szuru_batch_selection";
@@ -95,8 +96,19 @@ function persist(): void {
 /**
  * Apply a delta and return the resulting basket. Reading is the same call with
  * no mutations, so the picker only ever needs this one round trip.
+ *
+ * Serialised, because this is a read-modify-write across an await: two pickers
+ * on the same booru would otherwise both restore, both append, and settle in
+ * whichever order they resumed in. The basket's order decides the order the
+ * batch imports in, so that is not a detail we can leave to chance.
  */
-export async function mutateBatchSelection(req: BatchSelectionRequest): Promise<BatchSelectionState> {
+const selectionChain = createWriteChain();
+
+export function mutateBatchSelection(req: BatchSelectionRequest): Promise<BatchSelectionState> {
+  return selectionChain(() => applySelectionDelta(req));
+}
+
+async function applySelectionDelta(req: BatchSelectionRequest): Promise<BatchSelectionState> {
   const key = basketKey(req?.pageUrl);
   if (!key) return emptyState();
 

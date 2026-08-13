@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.5] – August 2026
+
+### Fixed
+
+- The batch selection kept the order it was picked in. Its picks are sent to the background as deltas, but a second delta could be sent while the first was still on its way, and whichever answered first ended up in front — so "All pages" filled the basket in the order the round trips happened to finish. The import order was reversed correctly, only the list underneath it was already out of order: a batch would start with a couple of posts in listing order, then run backwards, then drop a stray chunk at the end. Deltas are now sent one after another, on both sides of the message.
+
 ## [3.0.4] – August 2026
 
 ### Added
