@@ -92,6 +92,8 @@ export default {
   "options.batch.maxPostsHint": "Obergrenze für „Alle Seiten“: Der Durchlauf stoppt, sobald so viele Posts gesammelt wurden. Verhindert, dass ein Klick auf einer riesigen Suche tausende Importe einreiht.",
   "options.batch.skipImported": "Bereits vorhandene Posts überspringen",
   "options.batch.skipImportedHint": "Prüft jeden ausgewählten Post vorab gegen deine Instanz und überspringt die, die schon da sind — für sie geht gar kein Tab auf. Ein zweiter Durchlauf über eine halb importierte Liste ist damit fast sofort fertig.",
+  "options.batch.oldestFirst": "Älteste zuerst importieren",
+  "options.batch.oldestFirstHint": "Arbeitet die Auswahl von hinten nach vorne ab: Der neueste Post wird zuletzt hochgeladen und steht damit in deiner Instanz ganz oben. Ohne die Option wird eine Liste (neu → alt) in ihrer eigenen Reihenfolge importiert und die ältesten Posts landen oben. Pools behalten in beiden Fällen ihre Auswahl-Reihenfolge.",
   "options.batch.separateWindow": "In eigenem Fenster ausführen",
   "options.batch.separateWindowHint": "Der Batch öffnet seine Posts in einem eigenen, nicht fokussierten Browser-Fenster und schließt es am Ende wieder. Dein aktuelles Fenster bleibt sauber und du kannst normal weiterarbeiten. Aus = Hintergrund-Tabs im aktuellen Fenster.",
   "options.batch.maxPages": "Max. Seiten pro Durchlauf",
@@ -300,6 +302,10 @@ export default {
   "changelog.title": "Changelog",
 
   "changelog.v302.date": "August 2026",
+  "changelog.v304.date": "August 2026",
+  "changelog.v304.oldestFirst": "Batches importieren den ältesten Post zuerst",
+  "changelog.v304.oldestFirstDesc": "Eine Liste läuft neu → alt, szurubooru zeigt den neuesten Upload zuerst — ein ganzer Künstler landete also mit den ältesten Werken oben. Die Auswahl wird jetzt von hinten nach vorne abgearbeitet: Der neueste Post wird zuletzt hochgeladen und steht damit oben. Pools behalten ihre Auswahl-Reihenfolge.",
+
   "changelog.v303.date": "August 2026",
   "changelog.v303.ctrlHover": "Vorschau folgt dem Cursor",
   "changelog.v303.ctrlHoverDesc": "Import-Buttons erscheinen wieder direkt beim Überfahren. Nur die kompaktere Thumbnail-Vorschau braucht Strg, folgt dem Cursor und blendet sanft ein.",

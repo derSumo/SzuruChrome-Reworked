@@ -20,6 +20,12 @@
 //
 // Pool mode additionally collects the created post ids in selection order and
 // assigns them to a szurubooru pool once every item has been processed.
+//
+// Upload order is reversed by default (`oldestFirst`), because a booru listing
+// runs newest → oldest while szurubooru shows the highest post id first: import
+// a whole artist in listing order and the instance ends up with that artist's
+// oldest work on top. Walking the selection backwards makes the newest source
+// post the last upload, and therefore the first one seen afterwards.
 
 import { BrowserCommand } from "~/models";
 import { getErrorMessage } from "~/utils";
@@ -27,6 +33,20 @@ import { sleep } from "~/shared/async";
 import { batchWindow, openScrapeTab } from "./scrapeTab";
 
 const HARD_CONCURRENCY_CAP = 3;
+
+/** Settings that shape how a batch is driven; read once when it starts. */
+export interface BatchOptions {
+  skipImported: boolean;
+  separateWindow: boolean;
+  /** Import the selection back to front, newest source post last. */
+  oldestFirst: boolean;
+}
+
+const DEFAULT_BATCH_OPTIONS: BatchOptions = {
+  skipImported: true,
+  separateWindow: true,
+  oldestFirst: true,
+};
 
 export interface BatchImportRequest {
   urls: string[];
@@ -53,7 +73,7 @@ export interface BatchRunnerHooks {
   assignPool: (poolName: string, postIds: number[]) => Promise<{ poolId?: number; error?: string }>;
   concurrency: () => Promise<number>;
   /** Settings that shape how the tabs are driven; read once per batch. */
-  options: () => Promise<{ skipImported: boolean; separateWindow: boolean }>;
+  options: () => Promise<BatchOptions>;
   /** Post id when the URL is already in the instance — then no tab is opened. */
   findImported: (url: string) => Promise<number | undefined>;
 }
@@ -110,14 +130,17 @@ interface BatchSession {
   poolName?: string;
   /** Every tab that contributed to this batch; all of them see the progress. */
   originTabIds: Set<number>;
+  /** Upload order — reversed against `poolOrder` when `oldestFirst` is on. */
   queue: string[];
+  /** The same URLs as the user selected them; the order a pool is built in. */
+  poolOrder: string[];
   /** URLs ever queued here — the dedupe that makes a double click a no-op. */
   seen: Set<string>;
   ordered: BatchItemResult[];
   cursor: number;
   done: number;
   concurrency: number;
-  options: { skipImported: boolean; separateWindow: boolean };
+  options: BatchOptions;
   hooks: BatchRunnerHooks;
 }
 
@@ -169,9 +192,10 @@ interface PersistedSession {
   poolName?: string;
   originTabIds: number[];
   queue: string[];
+  poolOrder?: string[];
   ordered: (BatchItemResult | undefined)[];
   concurrency: number;
-  options: { skipImported: boolean; separateWindow: boolean };
+  options: BatchOptions;
 }
 
 function sessionArea() {
@@ -190,6 +214,7 @@ function persistSession(session: BatchSession): void {
       poolName: session.poolName,
       originTabIds: [...session.originTabIds],
       queue: session.queue,
+      poolOrder: session.poolOrder,
       ordered: session.ordered,
       concurrency: session.concurrency,
       options: session.options,
@@ -235,13 +260,16 @@ export async function resumeBatchImport(
     poolName: stored.poolName,
     originTabIds: new Set(stored.originTabIds ?? []),
     queue: stored.queue,
+    // Written since v3.0.4; a session stored before that ran unreversed, so its
+    // queue *is* the selection order.
+    poolOrder: stored.poolOrder ?? stored.queue,
     seen: new Set(stored.queue),
     // Sparse on purpose: the holes are what still needs importing.
     ordered: ordered as BatchItemResult[],
     cursor: stored.queue.findIndex((_, i) => !ordered[i]),
     done: ordered.filter(Boolean).length,
     concurrency: stored.concurrency || 1,
-    options: stored.options ?? { skipImported: true, separateWindow: true },
+    options: { ...DEFAULT_BATCH_OPTIONS, ...stored.options },
     hooks,
   };
 
@@ -262,19 +290,29 @@ export function getActiveBatchStatus(): { batchId: string; done: number; total: 
   };
 }
 
-/** Queue the URLs this session hasn't seen yet; returns how many were new. */
+/**
+ * Queue the URLs this session hasn't seen yet; returns how many were new.
+ *
+ * With `oldestFirst` the chunk goes into the upload queue back to front (see the
+ * note at the top of this file). Each append is reversed within itself, not the
+ * queue as a whole — what is already running keeps running, so selecting page 1
+ * and then page 2 gives two newest-last runs rather than one.
+ */
 function appendToSession(session: BatchSession, urls: string[], originTabId?: number): { accepted: number; duplicates: number } {
-  let accepted = 0;
   let duplicates = 0;
+  const fresh: string[] = [];
   for (const url of urls) {
     if (!url) continue;
     if (session.seen.has(url)) { duplicates++; continue; }
     session.seen.add(url);
-    session.queue.push(url);
-    accepted++;
+    fresh.push(url);
   }
+
+  for (const url of fresh) session.poolOrder.push(url);
+  for (const url of session.options.oldestFirst ? fresh.slice().reverse() : fresh) session.queue.push(url);
+
   if (typeof originTabId === "number") session.originTabIds.add(originTabId);
-  return { accepted, duplicates };
+  return { accepted: fresh.length, duplicates };
 }
 
 async function runWorker(session: BatchSession): Promise<void> {
@@ -335,10 +373,15 @@ async function runSession(session: BatchSession): Promise<BatchItemResult[]> {
 
   const results = session.ordered.filter(Boolean);
 
-  // Pool assignment, in the order the user selected the posts.
+  // Pool assignment, in the order the user selected the posts — deliberately
+  // not the upload order: a pool's sequence is its page order and must not flip
+  // just because `oldestFirst` uploads the selection backwards.
   let poolResult: { poolId?: number; error?: string } | undefined;
   if (session.poolName) {
-    const postIds = results.filter((r) => r.postId).map((r) => r.postId!);
+    const byUrl = new Map(results.map((r) => [r.url, r]));
+    const postIds = session.poolOrder
+      .map((url) => byUrl.get(url)?.postId)
+      .filter((id): id is number => id !== undefined);
     if (postIds.length > 0) {
       poolResult = await session.hooks
         .assignPool(session.poolName, postIds)
@@ -421,12 +464,13 @@ export async function runBatchImport(req: BatchImportRequest, hooks: BatchRunner
     poolName: req.poolName,
     originTabIds: new Set(typeof req.originTabId === "number" ? [req.originTabId] : []),
     queue: [],
+    poolOrder: [],
     seen: new Set(),
     ordered: [],
     cursor: 0,
     done: 0,
     concurrency: Math.max(1, Math.min(requested || 1, HARD_CONCURRENCY_CAP)),
-    options: await hooks.options().catch(() => ({ skipImported: true, separateWindow: true })),
+    options: await hooks.options().catch(() => ({ ...DEFAULT_BATCH_OPTIONS })),
     hooks,
   };
   const { accepted, duplicates } = appendToSession(session, urls);

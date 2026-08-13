@@ -92,6 +92,8 @@ export default {
   "options.batch.maxPostsHint": "Upper bound for \"All pages\": the crawl stops once this many posts have been collected. Keeps a single click on a huge search from queueing thousands of imports.",
   "options.batch.skipImported": "Skip posts you already have",
   "options.batch.skipImportedHint": "Checks each selected post against your instance first and skips the ones already there — no tab is opened for them at all. Makes re-running a batch over a half-imported listing nearly instant.",
+  "options.batch.oldestFirst": "Import oldest first",
+  "options.batch.oldestFirstHint": "Works through the selection back to front, so the newest post is uploaded last and lands at the top of your instance. Without it a listing (newest → oldest) is imported in its own order and leaves the oldest posts on top. Pools keep their selection order either way.",
   "options.batch.separateWindow": "Run in a separate window",
   "options.batch.separateWindowHint": "The batch opens its posts in one unfocused browser window of its own and closes it when finished, so your current window stays clean and you can keep working. Turn off to use background tabs in the current window.",
   "options.batch.maxPages": "Max. pages per crawl",
@@ -300,6 +302,10 @@ export default {
   "changelog.title": "Changelog",
 
   "changelog.v302.date": "August 2026",
+  "changelog.v304.date": "August 2026",
+  "changelog.v304.oldestFirst": "Batches import the oldest post first",
+  "changelog.v304.oldestFirstDesc": "A listing runs newest → oldest while szurubooru shows the newest upload first, so importing a whole artist left their oldest work on top. The selection is now worked through back to front: the newest post is uploaded last and lands at the top. Pools keep their selection order.",
+
   "changelog.v303.date": "August 2026",
   "changelog.v303.ctrlHover": "Preview follows the cursor",
   "changelog.v303.ctrlHoverDesc": "Import buttons appear directly on hover again. Only the more compact thumbnail preview needs Ctrl; it follows the cursor and fades in smoothly.",

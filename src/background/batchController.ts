@@ -92,6 +92,7 @@ function buildHooks(poolSite: SzuruSiteConfig | undefined): BatchRunnerHooks {
       return {
         skipImported: batchCfg?.skipImported !== false,
         separateWindow: batchCfg?.separateWindow !== false,
+        oldestFirst: batchCfg?.oldestFirst !== false,
       };
     },
 

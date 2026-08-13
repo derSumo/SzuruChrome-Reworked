@@ -811,6 +811,17 @@ async function doResetStats() {
 
           <div class="option-row" v-if="cfg.batchImport.enabled">
             <div class="option-info">
+              <span class="option-label">{{ t("options.batch.oldestFirst") }}</span>
+              <span class="option-hint">{{ t("options.batch.oldestFirstHint") }}</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="cfg.batchImport.oldestFirst" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="option-row" v-if="cfg.batchImport.enabled">
+            <div class="option-info">
               <span class="option-label">{{ t("options.batch.separateWindow") }}</span>
               <span class="option-hint">{{ t("options.batch.separateWindowHint") }}</span>
             </div>
@@ -1243,6 +1254,13 @@ async function doResetStats() {
         <h2 class="tab-title">{{ t("changelog.title") }}</h2>
 
         <div class="card changelog-card">
+          <div class="changelog-entry">
+            <div class="changelog-version">v3.0.4</div>
+            <div class="changelog-date">{{ t("changelog.v304.date") }}</div>
+            <ul class="changelog-list">
+              <li><strong>{{ t("changelog.v304.oldestFirst") }}</strong> — {{ t("changelog.v304.oldestFirstDesc") }}</li>
+            </ul>
+          </div>
           <div class="changelog-entry">
             <div class="changelog-version">v3.0.3</div>
             <div class="changelog-date">{{ t("changelog.v303.date") }}</div>

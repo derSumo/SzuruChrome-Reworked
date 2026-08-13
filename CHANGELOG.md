@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.4] – August 2026
+
+### Added
+
+- Batch imports now upload the oldest post first. A booru listing runs newest → oldest while szurubooru shows the newest upload first, so importing a whole artist in listing order left their oldest work sitting on top of the instance. The batch walks the selection back to front instead, which makes the newest post the last upload — and the first one you see afterwards. On by default, switchable under Interface → Batch import. Pools keep their selection order either way.
+
 ## [3.0.3] – August 2026
 
 ### Changed

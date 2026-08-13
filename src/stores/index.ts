@@ -72,6 +72,7 @@ export const cfg = useStorageLocal(
               maxPosts: 500,
               skipImported: true,
               separateWindow: true,
+              oldestFirst: true,
             };
           }
         // eslint-disable-next-line no-fallthrough
@@ -115,6 +116,13 @@ export const cfg = useStorageLocal(
             };
           }
           if (!Array.isArray(cfg.listing.hoverZoomSites)) cfg.listing.hoverZoomSites = [];
+        // eslint-disable-next-line no-fallthrough
+        case 9:
+          cfg.version++;
+          // Newest-last batch order arrives in v3.0.4. On by default, including
+          // for existing users: importing a listing in its own order is what put
+          // their oldest posts on top of the instance in the first place.
+          if (typeof cfg.batchImport.oldestFirst !== "boolean") cfg.batchImport.oldestFirst = true;
       }
 
       if (oldVersion != cfg.version) {

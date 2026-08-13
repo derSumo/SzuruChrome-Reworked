@@ -77,6 +77,10 @@ export function defaultConfig() {
       maxPosts: 500,
       // Don't even open a tab for a post that is already in the instance.
       skipImported: true,
+      // Upload the selection back to front. Booru listings run newest → oldest
+      // and szurubooru shows the newest upload first, so importing in listing
+      // order would leave the oldest posts on top of the instance.
+      oldestFirst: true,
       // Drive the batch in its own unfocused window so the user's window
       // doesn't fill up with tabs; it closes again when the batch is done.
       separateWindow: true,
