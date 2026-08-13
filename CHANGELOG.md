@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.6] – August 2026
+
+### Fixed
+
+- Tagged builds produce a release again. The pinned toolchain in `pnpm-lock.yaml` had not been re-resolved since 2023, and the version of `unplugin-auto-import` it held injected the auto-imported `browser` polyfill into the middle of a comment — so every tagged build since v3.0.1 failed before it packaged anything, and v3.0.1 through v3.0.5 never got a release. Resolving the lockfile against the ranges `package.json` already declares reaches a working toolchain without changing a single dependency range. This release therefore also carries everything from v3.0.4 and v3.0.5.
+
 ## [3.0.5] – August 2026
 
 ### Fixed
