@@ -2,7 +2,7 @@
   "name": "szuruchrome",
   "displayName": "SzuruChrome Reworked",
   "description": "Import media from various sites into szurubooru. Reworked fork with QoL improvements.",
-  "version": "3.0.6",
+  "version": "3.1.0",
   "private": true,
   "scripts": {
     "dev": "npm run clear && cross-env NODE_ENV=development run-p dev:*",
@@ -26,6 +26,7 @@
     "sign:firefox": "web-ext sign --source-dir ./extension",
     "clear": "rimraf extension/dist extension/manifest.json extension.*",
     "lint": "eslint .",
+    "typecheck": "vue-tsc --noEmit",
     "extlint": "web-ext lint -s extension",
     "test": "vitest test",
     "pretty": "prettier -w ."
@@ -76,6 +77,7 @@
     "vitest": "^1.1.0",
     "vue": "^3.4.0",
     "vue-eslint-parser": "^9.3.2",
+    "vue-tsc": "^2.0.29",
     "web-ext": "^8.4.0",
     "webextension-polyfill": "^0.10.0"
   }

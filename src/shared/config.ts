@@ -26,17 +26,14 @@ export function defaultConfig() {
     selectedSiteId: undefined as string | undefined,
     addTagImplications: true,
     addAllParsedTags: true,
+    // Which panels were left open is remembered in `~/shared/uiState` under its
+    // own storage key, not here — a config backup carries settings only.
     merge: {
-      expandOptions: true,
-      expandExistingTags: false,
-      expandAddTags: true,
       addMissingTags: true,
       appendSource: true,
       mergeSafety: true,
     },
     popup: {
-      expandTags: true,
-      expandPools: false,
       showSource: true,
       showPools: true,
       tagSortMode: "usage" as TagSortMode,
@@ -94,8 +91,15 @@ export function defaultConfig() {
       endlessScroll: false,
       /** Enlarge the thumbnail under the cursor. */
       hoverZoom: false,
-      /** "all" = every supported source site, "sites" = the list below. */
-      hoverZoomScope: "sites" as "all" | "sites",
+      /**
+       * "all" = every supported source site, "sites" = the list below.
+       *
+       * Defaults to "all" because the content script only ever runs on sites
+       * the user granted source access to — restricting it a second time made
+       * the toggle above do nothing at all until a host was typed in by hand,
+       * which reads as a broken feature rather than a safety net.
+       */
+      hoverZoomScope: "all" as "all" | "sites",
       hoverZoomSites: [] as string[],
       /** Grace period before the preview opens, so passing over is quiet. */
       hoverZoomDelayMs: 350,

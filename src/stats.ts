@@ -14,6 +14,10 @@ export const STATS_STORAGE_KEY = "szuru_stats";
 /** Keep the failure list bounded — it stores scrape payloads for retries. */
 export const MAX_STORED_FAILURES = 50;
 
+/** How many successful imports the history keeps. Bounded so the stats blob
+ *  stays small — it is read on every options-page open. */
+export const MAX_RECENT_IMPORTS = 50;
+
 /** Days retained in the per-day histogram (drives the options-page chart). */
 export const STATS_HISTORY_DAYS = 60;
 
@@ -37,6 +41,26 @@ export interface FailedImport {
   scrapeResults?: any;
 }
 
+/**
+ * One successful import, kept so the options page can answer "what did I
+ * upload last, and where did it go?" — the counters alone cannot.
+ *
+ * Deliberately small: no tags, no scrape payload. This is a log to click
+ * through, not a second copy of the post.
+ */
+export interface RecentImport {
+  at: number;
+  /** Post id in the instance; absent only if szurubooru returned none. */
+  postId?: number;
+  /** Instance the post landed in, resolved to a label by the options page. */
+  siteId?: string;
+  /** Source page it came from, so the row can link back to the booru. */
+  pageUrl?: string;
+  host?: string;
+  /** "duplicate" means it was already there — still worth showing. */
+  outcome: Exclude<ImportOutcome, "error">;
+}
+
 export interface ImportStats {
   version: 1;
   totalSuccess: number;
@@ -49,6 +73,8 @@ export interface ImportStats {
   /** "YYYY-MM-DD" → successful (incl. duplicate) imports that day. */
   byDay: Record<string, number>;
   failures: FailedImport[];
+  /** Newest-last log of successful imports; bounded by MAX_RECENT_IMPORTS. */
+  recent: RecentImport[];
   firstImportAt?: number;
   lastImportAt?: number;
 }
@@ -65,6 +91,7 @@ export function emptyStats(): ImportStats {
     byHost: {},
     byDay: {},
     failures: [],
+    recent: [],
   };
 }
 
@@ -122,6 +149,8 @@ export interface RecordImportInput {
   outcome: ImportOutcome;
   pageUrl?: string;
   siteId?: string;
+  /** Resulting post in the instance; drives the history row's link. */
+  postId?: number;
   bytes?: number;
   durationMs?: number;
   /** Only used for `error`. */
@@ -159,6 +188,19 @@ export function recordImport(input: RecordImportInput): Promise<void> {
       pruneHistory(stats);
       if (input.bytes && input.bytes > 0) stats.totalBytes += input.bytes;
       if (input.durationMs && input.durationMs > 0) stats.totalDurationMs += input.durationMs;
+
+      stats.recent.push({
+        at: now,
+        postId: input.postId,
+        siteId: input.siteId,
+        pageUrl: input.pageUrl,
+        host,
+        outcome: input.outcome,
+      });
+      // Newest-last, so the oldest entries fall off the front.
+      if (stats.recent.length > MAX_RECENT_IMPORTS) {
+        stats.recent.splice(0, stats.recent.length - MAX_RECENT_IMPORTS);
+      }
     }
 
     stats.firstImportAt = stats.firstImportAt ?? now;
@@ -183,6 +225,16 @@ export function clearFailures(): Promise<void> {
     const stats = await getStats();
     if (stats.failures.length === 0) return;
     stats.failures = [];
+    await writeStats(stats);
+  });
+}
+
+/** Empty the import history without touching the counters. */
+export function clearRecent(): Promise<void> {
+  return serializeStatsWrite(async () => {
+    const stats = await getStats();
+    if (stats.recent.length === 0) return;
+    stats.recent = [];
     await writeStats(stats);
   });
 }
@@ -224,4 +276,9 @@ export function topHosts(stats: ImportStats, limit = 8) {
     }))
     .sort((a, b) => b.total - a.total)
     .slice(0, limit);
+}
+
+/** Newest-first view of the import history, for the options page. */
+export function recentImports(stats: ImportStats, limit = MAX_RECENT_IMPORTS) {
+  return [...stats.recent].reverse().slice(0, limit);
 }

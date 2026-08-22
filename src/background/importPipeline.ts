@@ -26,7 +26,13 @@ import {
 import { encodeTagName, getErrorMessage } from "~/utils";
 import { base64ToArrayBuffer, isPlausibleMediaSize } from "~/shared/binary";
 import { guessFilenameFromUrl, guessMimeTypeFromUrl, isBetterContent, measureImageSize } from "~/shared/media";
-import { applyConfigToScrapedPost, buildPostDisplayName, getFirstScrapeHit, scrapeHasPost } from "~/shared/scrape";
+import {
+  applyConfigToScrapedPost,
+  buildPostDisplayName,
+  getFirstScrapeHit,
+  resolveTagRules,
+  scrapeHasPost,
+} from "~/shared/scrape";
 import { sendTabCommand, isRestrictedTabUrl } from "~/shared/tabs";
 import { sleep, withTimeout } from "~/shared/async";
 import type { StoredConfig } from "~/shared/config";
@@ -80,7 +86,7 @@ export async function scrapeNowOrUndefined(tabId: number): Promise<any> {
 }
 
 /** Map a raw neo-scraper post into the shape `uploadPost` expects. */
-function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredConfig) {
+function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredConfig, siteId?: string) {
   const post: any = {
     id: crypto.randomUUID(),
     name: buildPostDisplayName(engine, scrapedPost?.name),
@@ -103,7 +109,9 @@ function mapScrapedPostForUpload(scrapedPost: any, engine: string, cfg: StoredCo
     instanceSpecificData: {},
   };
 
-  applyConfigToScrapedPost(post, cfg);
+  // The target instance may override the global tag rules, so resolve them
+  // against the site this import is bound for.
+  applyConfigToScrapedPost(post, { ...cfg, tagRules: resolveTagRules(cfg, siteId) });
 
   for (const site of cfg.sites ?? []) {
     post.instanceSpecificData[site.id] = {};
@@ -145,7 +153,7 @@ export async function importCurrentPageInBackground(
   const hit = getFirstScrapeHit(scrapeResults);
   if (!hit) throw new Error(t("bg.noMedia"));
 
-  const post = mapScrapedPostForUpload(hit.post, hit.engine, cfg);
+  const post = mapScrapedPostForUpload(hit.post, hit.engine, cfg, selectedSite.id);
 
   // `activeTab` lets a hotkey scrape the visible document, but it does not
   // grant access to a booru's image-CDN subdomains. Since the source-access

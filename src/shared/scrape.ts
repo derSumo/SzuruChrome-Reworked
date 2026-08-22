@@ -62,6 +62,22 @@ export function buildPostDisplayName(engine: string, name: string | undefined, i
 }
 
 /**
+ * Pick the tag rules that apply when uploading to `siteId`.
+ *
+ * An instance may carry its own rule set — an SFW and an NSFW target usually
+ * want different tags out of the same scrape. Instances without an override
+ * (the normal case) fall back to the global rules, so the common setup stays a
+ * single list edited in one place.
+ */
+export function resolveTagRules(
+  cfg: { tagRules?: TagRulesConfig; sites?: Array<{ id: string; tagRules?: TagRulesConfig }> },
+  siteId: string | undefined,
+): TagRulesConfig | undefined {
+  if (!siteId) return cfg.tagRules;
+  return cfg.sites?.find((site) => site.id === siteId)?.tagRules ?? cfg.tagRules;
+}
+
+/**
  * The subset of the config that affects a scraped post. Declared structurally
  * rather than as `StoredConfig` so both the reactive store value and a raw
  * (partially populated) stored config satisfy it.

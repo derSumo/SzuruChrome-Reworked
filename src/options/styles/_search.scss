@@ -1,0 +1,219 @@
+/* ── Sidebar search + results ────────────────────────────── */
+.sidebar-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0 12px 10px;
+}
+
+.sidebar-search-icon {
+  position: absolute;
+  left: 9px;
+  display: inline-flex;
+  color: var(--lq-text-tertiary);
+  pointer-events: none;
+}
+
+.sidebar-search-input {
+  width: 100%;
+  padding: 7px 10px 7px 30px;
+  font-size: 13px;
+  color: var(--lq-text);
+  background: var(--lq-input-bg);
+  border: 1px solid var(--lq-input-border);
+  border-radius: var(--lq-radius-sm);
+  appearance: none;
+}
+
+.sidebar-search-input::placeholder {
+  color: var(--lq-text-tertiary);
+}
+
+/* ── Nav items with icons ────────────────────────────────── */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.nav-item-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.68;
+}
+
+.nav-item.active .nav-item-icon {
+  opacity: 1;
+}
+
+.nav-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Result list ─────────────────────────────────────────── */
+.search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.search-hit {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 16px;
+  font: inherit;
+  text-align: left;
+  color: var(--lq-text);
+  cursor: pointer;
+  background: var(--lq-surface);
+  border: 1px solid var(--lq-surface-border);
+  border-radius: var(--lq-radius-sm);
+  backdrop-filter: blur(var(--lq-blur));
+  transition: background var(--lq-transition), border-color var(--lq-transition);
+}
+
+.search-hit:hover {
+  background: var(--lq-surface-hover);
+  border-color: var(--lq-accent-line, var(--lq-surface-border));
+}
+
+.search-hit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.search-hit-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.search-hit-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--lq-text-secondary);
+}
+
+.search-hit-tab {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--lq-accent);
+  white-space: nowrap;
+  background: var(--lq-accent-soft);
+  border-radius: 999px;
+}
+
+/* ── "Differs from default" marker ───────────────────────── */
+.option-changed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 1px 7px 1px 5px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--lq-accent);
+  cursor: pointer;
+  vertical-align: middle;
+  background: var(--lq-accent-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  transition: border-color var(--lq-transition);
+}
+
+.option-changed:hover {
+  border-color: var(--lq-accent);
+}
+
+.option-changed-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lq-accent);
+}
+
+/* ── Deep-link / search-result target ────────────────────── */
+.option-row.highlighted {
+  position: relative;
+  border-radius: var(--lq-radius-sm);
+  box-shadow: 0 0 0 2px var(--lq-accent-glow);
+  animation: lq-highlight 2.4s ease-out;
+}
+
+@keyframes lq-highlight {
+  0%, 55% { background: var(--lq-accent-soft); }
+  100% { background: transparent; }
+}
+
+/* ── Tab lede + rule target row ──────────────────────────── */
+.tab-lede {
+  margin: -6px 0 20px;
+  max-width: 62ch;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--lq-text-secondary);
+}
+
+.rule-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 14px;
+}
+
+.rule-target .form-label {
+  margin: 0;
+}
+
+.rule-inherited {
+  margin-top: -6px;
+  color: var(--lq-warning);
+}
+
+.rule-fieldset {
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.rule-fieldset[disabled] {
+  opacity: 0.55;
+}
+
+.tester-actions {
+  margin-bottom: 10px;
+}
+
+.instance-rules-note {
+  margin-top: 4px;
+  color: var(--lq-accent);
+}
+
+/* ── About tab ───────────────────────────────────────────── */
+.about-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.about-version {
+  font-family: var(--lq-mono);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.about-link {
+  font-size: 13px;
+  color: var(--lq-accent);
+}

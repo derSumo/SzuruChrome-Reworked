@@ -119,6 +119,7 @@ function buildHooks(poolSite: SzuruSiteConfig | undefined): BatchRunnerHooks {
           outcome: result.alreadyUploaded ? "duplicate" : "success",
           pageUrl: url,
           siteId: result.selectedSite.id,
+          postId,
           durationMs: Date.now() - startedAt,
         }).catch(() => { });
       }

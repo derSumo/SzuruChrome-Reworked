@@ -5,6 +5,8 @@ defineProps<{
   access: Record<string, boolean>;
   title: string;
   hint: string;
+  /** Shown when a request/removal was rejected — previously this went to a status line on another tab. */
+  error?: string;
 }>();
 
 defineEmits<{
@@ -27,5 +29,7 @@ defineEmits<{
         />
       </label>
     </div>
+
+    <p v-if="error" class="status-text status-error">{{ error }}</p>
   </div>
 </template>

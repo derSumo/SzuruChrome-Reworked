@@ -70,7 +70,16 @@ import { onBfcacheRestore } from "./navigation";
    */
   async function ensureListingExtras(): Promise<void> {
     const listing = await getListingSettings();
-    if (!listing.hoverZoom && !listing.endlessScroll) return;
+    if (!listing.hoverZoom && !listing.endlessScroll) {
+      // "It is switched on but nothing happens" is otherwise invisible: the
+      // zoom can still be scoped to a host list this page is not on, and a
+      // silent return gives the user nothing to go on.
+      const cfg = await getConfig();
+      if (cfg?.listing?.hoverZoom === true) {
+        console.info("[szuru] Hover zoom is enabled but not for this site — add this host under Options → On page, or set its scope to all supported sites.");
+      }
+      return;
+    }
     await browser.runtime.sendMessage(new BrowserCommand("inject_listing_extras")).catch(() => {
       // Background asleep or the tab is not scriptable; retried on the next
       // config change or page load.

@@ -278,6 +278,7 @@ async function processImportTask(task: ImportTask): Promise<void> {
         outcome: result.alreadyUploaded ? "duplicate" : "success",
         pageUrl: taskPageUrl,
         siteId,
+        postId,
         bytes: transferredBytes,
         durationMs: Date.now() - startedAt,
       }).catch((ex) => console.warn("Failed to record import stats:", ex));

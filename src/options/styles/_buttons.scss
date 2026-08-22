@@ -1,0 +1,84 @@
+/* ── Buttons ───────────────────────────────────────────── */
+.btn {
+  height: 34px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--lq-radius-xs);
+  font-family: var(--lq-font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--lq-transition);
+  position: relative;
+  overflow: hidden;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  &:not(:disabled):hover {
+    transform: translateY(-1px);
+  }
+
+  &:not(:disabled):active {
+    transform: translateY(0);
+  }
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--lq-accent), #8b5cf6);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--lq-accent-glow);
+
+  &:not(:disabled):hover {
+    box-shadow: 0 4px 16px var(--lq-accent-glow);
+  }
+}
+
+.btn-secondary {
+  background: var(--lq-input-bg);
+  border: 1px solid var(--lq-input-border);
+  color: var(--lq-text);
+
+  &:not(:disabled):hover {
+    background: var(--lq-surface-hover);
+    border-color: var(--lq-accent);
+  }
+}
+
+.btn-danger {
+  background: var(--lq-danger);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.2);
+
+  &:not(:disabled):hover {
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+  }
+}
+
+.btn-icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: var(--lq-radius-xs);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--lq-text-tertiary);
+  transition: all var(--lq-transition);
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--lq-danger);
+  }
+}
+
+.ml-auto { margin-left: auto; }
+

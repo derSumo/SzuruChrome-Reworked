@@ -1,0 +1,47 @@
+/* ── Changelog ─────────────────────────────────────────── */
+.changelog-card {
+  gap: 0;
+}
+
+.changelog-entry {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--lq-surface-border);
+
+  &:first-child { padding-top: 0; }
+  &:last-child  { border-bottom: none; padding-bottom: 0; }
+}
+
+.changelog-version {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--lq-mono);
+  color: var(--lq-accent);
+  background: var(--lq-accent-soft);
+  padding: 2px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+.changelog-date {
+  font-size: 12px;
+  color: var(--lq-text-tertiary);
+  margin: 8px 0 12px;
+}
+
+.changelog-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  li {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--lq-text);
+
+    strong { color: var(--lq-text); font-weight: 650; }
+  }
+}
+

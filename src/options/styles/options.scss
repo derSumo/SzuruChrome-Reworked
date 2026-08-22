@@ -1,0 +1,25 @@
+/* ══════════════════════════════════════════════════════════
+   LIQUID UI – SzuruChrome Options
+   Frosted glass, fluid motion, depth & translucency
+
+   Split into partials by concern. The load order below IS the
+   cascade order and matches the original single stylesheet —
+   several partials override earlier ones at equal specificity,
+   so do not reorder without checking the affected selectors.
+   ══════════════════════════════════════════════════════════ */
+
+@use "./tokens";
+@use "./layout";
+@use "./cards";
+@use "./controls";
+@use "./instances";
+@use "./tags";
+@use "./stats";
+@use "./buttons";
+@use "./sliders";
+@use "./hosts";
+@use "./changelog";
+@use "./search";
+@use "./history";
+@use "./focus";
+@use "./responsive";

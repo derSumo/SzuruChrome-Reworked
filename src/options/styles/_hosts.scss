@@ -1,0 +1,112 @@
+/* ── Upload-as-Content sites ──────────────────────────── */
+.uac-active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px;
+  border: 1.5px dashed var(--lq-input-border);
+  border-radius: var(--lq-radius-sm);
+  background: var(--lq-input-bg);
+  min-height: 56px;
+  transition: border-color var(--lq-transition), background var(--lq-transition);
+
+  &.drag-hover {
+    border-color: var(--lq-accent);
+    background: var(--lq-accent-soft);
+  }
+}
+
+.uac-empty {
+  font-size: 12px;
+  color: var(--lq-text-tertiary);
+  font-style: italic;
+  align-self: center;
+  padding: 4px 2px;
+}
+
+.uac-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  background: var(--lq-surface);
+  border: 1px solid var(--lq-surface-border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--lq-mono);
+  font-weight: 600;
+  color: var(--lq-text);
+  transition: all var(--lq-transition);
+}
+
+.uac-chip-drag {
+  cursor: grab;
+  user-select: none;
+  background: var(--lq-input-bg);
+
+  &:hover {
+    border-color: var(--lq-accent);
+    background: var(--lq-accent-soft);
+    transform: translateY(-1px);
+  }
+
+  &:active { cursor: grabbing; }
+}
+
+.uac-host { letter-spacing: -0.02em; }
+
+.uac-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: linear-gradient(135deg, var(--lq-accent), #8b5cf6);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.uac-remove {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--lq-text-tertiary);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--lq-transition);
+
+  &:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--lq-danger);
+  }
+}
+
+.uac-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+
+  input[type="text"] { flex: 1; }
+}
+
+.uac-suggested-label {
+  margin-top: 18px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--lq-text-tertiary);
+}
+
+.uac-suggested {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+

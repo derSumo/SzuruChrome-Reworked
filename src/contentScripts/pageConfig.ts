@@ -50,10 +50,17 @@ export async function getBadgeSettings(): Promise<BadgeSettings> {
   };
 }
 
-/** Clamp a stored number into a sane range, tolerating undefined and garbage. */
-function limit(value: unknown, fallback: number, max: number): number {
+/**
+ * Clamp a stored number into a sane range, tolerating undefined and garbage.
+ *
+ * `min` is a real lower bound, not just a guard against nonsense: a delay of 0
+ * ("open immediately") is a legitimate setting the slider offers, while 0 pages
+ * or 0 posts is not — those fall back so a corrupted value cannot silently turn
+ * a crawl into a no-op.
+ */
+function limit(value: unknown, fallback: number, max: number, min = 1): number {
   const n = Math.floor(Number(value));
-  if (!Number.isFinite(n) || n < 1) return fallback;
+  if (!Number.isFinite(n) || n < min) return fallback;
   return Math.min(n, max);
 }
 
@@ -69,16 +76,20 @@ export async function getListingSettings(): Promise<ListingSettings> {
   const cfg = await getConfig();
   const listing = cfg?.listing;
 
-  // The zoom is opt-in per site unless the user chose "everywhere": it changes
-  // how a page behaves under the cursor, which is not something to switch on
-  // for sites the user never asked about.
-  const zoomAllowedHere = listing?.hoverZoomScope === "all"
-    || hostMatchesAny(window.location.href, listing?.hoverZoomSites);
+  // The zoom can be narrowed to a hand-picked list of hosts. An *empty* list
+  // is not that choice — it is a user who switched the feature on and never
+  // reached the host field, so it means "wherever this runs" rather than
+  // "nowhere". Silently disabling everything is what made the toggle look
+  // broken; a list with entries still restricts to exactly those.
+  const zoomSites = listing?.hoverZoomSites;
+  const zoomAllowedHere = listing?.hoverZoomScope !== "sites"
+    || !zoomSites?.length
+    || hostMatchesAny(window.location.href, zoomSites);
 
   return {
     hoverActions: listing?.hoverActions !== false,
     hoverZoom: listing?.hoverZoom === true && zoomAllowedHere,
-    hoverZoomDelayMs: limit(listing?.hoverZoomDelayMs, 350, 3000),
+    hoverZoomDelayMs: limit(listing?.hoverZoomDelayMs, 350, 3000, 0),
     endlessScroll: listing?.endlessScroll === true,
   };
 }

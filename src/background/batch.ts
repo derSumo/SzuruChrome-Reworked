@@ -142,9 +142,46 @@ interface BatchSession {
   concurrency: number;
   options: BatchOptions;
   hooks: BatchRunnerHooks;
+  /**
+   * Set by `cancelBatchImport`. Workers check it before picking up the next
+   * URL, so a cancel stops the queue without killing whatever is mid-upload —
+   * tearing a tab down between the content fetch and `createPost` is how you
+   * get a half-imported post.
+   */
+  cancelled?: boolean;
 }
 
 let activeSession: BatchSession | undefined;
+
+/**
+ * Stop the running batch after the items currently in flight.
+ *
+ * Returns false when there was nothing to cancel — either no batch is running,
+ * or `batchId` names a different one. Anything not yet started is dropped; the
+ * queue is not resumable afterwards, so the persisted session is cleared too.
+ */
+export function cancelBatchImport(batchId?: string): boolean {
+  const session = activeSession;
+  if (!session) return false;
+  if (batchId && session.batchId !== batchId) return false;
+  if (session.cancelled) return true;
+
+  session.cancelled = true;
+  // Nothing is left to hand out; workers still finishing an item run to the end.
+  session.cursor = session.queue.length;
+  clearPersistedSession();
+  console.log(`[batch] cancel requested for ${session.batchId}`);
+  broadcastBatchStatus(session, {
+    phase: "progress",
+    done: session.done,
+    total: session.queue.length,
+    skipped: skippedCount(session),
+    failed: failedCount(session),
+    poolName: session.poolName,
+    cancelling: true,
+  });
+  return true;
+}
 
 export interface BatchAcceptance {
   batchId: string;
@@ -279,7 +316,9 @@ export async function resumeBatchImport(
 }
 
 /** Summary for a page that wants to show a batch it didn't start itself. */
-export function getActiveBatchStatus(): { batchId: string; done: number; total: number; skipped: number; poolName?: string } | undefined {
+export function getActiveBatchStatus():
+  | { batchId: string; done: number; total: number; skipped: number; poolName?: string; cancelling: boolean }
+  | undefined {
   if (!activeSession) return undefined;
   return {
     batchId: activeSession.batchId,
@@ -287,6 +326,7 @@ export function getActiveBatchStatus(): { batchId: string; done: number; total: 
     total: activeSession.queue.length,
     skipped: skippedCount(activeSession),
     poolName: activeSession.poolName,
+    cancelling: activeSession.cancelled === true,
   };
 }
 
@@ -317,6 +357,7 @@ function appendToSession(session: BatchSession, urls: string[], originTabId?: nu
 
 async function runWorker(session: BatchSession): Promise<void> {
   for (;;) {
+    if (session.cancelled) return;
     const index = session.cursor++;
     const url = session.queue[index];
     if (url === undefined) return;
@@ -359,7 +400,7 @@ async function runSession(session: BatchSession): Promise<BatchItemResult[]> {
     // the same tick, so re-check before calling it a day.
     for (;;) {
       await Promise.all(Array.from({ length: session.concurrency }, () => runWorker(session)));
-      if (session.cursor >= session.queue.length) break;
+      if (session.cancelled || session.cursor >= session.queue.length) break;
     }
   } finally {
     await batchWindow.release();
@@ -376,6 +417,10 @@ async function runSession(session: BatchSession): Promise<BatchItemResult[]> {
   // Pool assignment, in the order the user selected the posts — deliberately
   // not the upload order: a pool's sequence is its page order and must not flip
   // just because `oldestFirst` uploads the selection backwards.
+  //
+  // A cancelled batch still pools what it managed to import: those posts exist
+  // in the instance either way, and leaving them out of the pool would be the
+  // surprising outcome.
   let poolResult: { poolId?: number; error?: string } | undefined;
   if (session.poolName) {
     const byUrl = new Map(results.map((r) => [r.url, r]));
@@ -399,7 +444,12 @@ async function runSession(session: BatchSession): Promise<BatchItemResult[]> {
   }
   broadcastBatchStatus(session, {
     phase: "done",
-    total: session.queue.length,
+    // A cancelled run reports against what it actually attempted, not against
+    // the queue it never got through — "24/24, 300 cancelled" reads honestly,
+    // "24/324 done" reads like a failure.
+    total: session.cancelled ? session.done : session.queue.length,
+    cancelled: session.cancelled === true,
+    cancelledRemaining: session.cancelled ? Math.max(0, session.queue.length - session.done) : 0,
     succeeded,
     skipped: skippedCount(session),
     failed: failures.length,

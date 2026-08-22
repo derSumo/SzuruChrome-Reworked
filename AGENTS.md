@@ -23,7 +23,7 @@ npm run pack:chrome   # ZIP für den Chrome Web Store → ./extension.zip
 npm run dev           # Dev-Modus mit HMR
 npm test              # Vitest
 npm run lint          # ESLint
-npx tsc --noEmit      # Typecheck (muss sauber sein)
+npm run typecheck     # vue-tsc — prüft AUCH die .vue-Dateien (tsc allein tut das nicht!)
 ```
 
 | Skript | Was es tut |
@@ -46,6 +46,7 @@ src/
 │   ├── listing.ts      #   Listen-Seiten: Post-Links, Pagination, Such-URL-Bau
 │   ├── media.ts        #   MIME-/Dateinamen-Ableitung aus URLs
 │   ├── binary.ts       #   base64 ⇄ ArrayBuffer (Message-Passing zerstört Binärdaten)
+│   ├── uiState.ts      #   gemerkte Panel-Zustände — bewusst NICHT in der Config
 │   └── async.ts        #   sleep, withTimeout, createWriteChain
 ├── api/
 │   ├── index.ts        # SzurubooruApi – alle API-Calls zur szurubooru-Instanz
@@ -79,6 +80,7 @@ src/
 │       ├── hoverZoom.ts#     Vergrößerte Vorschau (liest Bild-URL aus der Post-Seite)
 │       └── endlessScroll.ts# Nächste Listen-Seite anhängen
 │   ├── batchUi.ts      #   Auswahl-UI + Dock (laufende Batches stapeln über der Auswahl)
+│   ├── batchUi.styles.ts #  dessen injiziertes CSS + die id/class-Konstanten
 │   ├── listingCrawl.ts #   "Alle Seiten": Pagination durchlaufen, Post-URLs sammeln
 │   ├── hotkeys.ts      #   Quick-Import-Tastenkürzel
 │   ├── pageConfig.ts   #   EIN gecachter Config-Read für alle Features
@@ -88,8 +90,20 @@ src/
 │   ├── contentToken.ts # Content-Token-Beschaffung für den Popup-Pfad
 │   └── pages/
 │       ├── PopupMain.vue   # Haupt-Popup: Import, Similar-Search, Tag-Editor
+│       ├── PopupMain.scss  #   dessen scoped Styles (via <style src>)
 │       └── MergePost.vue   # Post mergen (Tags/Safety/Source zusammenführen)
-├── options/App.vue     # Settings (Tabs: General, Interface, Instances, Tags, Stats, Changelog)
+├── options/
+│   ├── App.vue         # NUR Hülle: Sidebar, Tab-Dispatch, Suche, Deep-Links, Color-Mode
+│   ├── settingsIndex.ts#   EINE Liste aller Einstellungen → Suche, Deep-Links, "geändert"-Marker
+│   ├── changelog.ts    #   Release-Historie als Daten (i18n-Keys), nicht als Markup
+│   ├── icons.ts        #   Sidebar-Icons (getrennt vom Content-Script-Icon-Set!)
+│   ├── keys.ts         #   Injection-Keys (Highlight-Ziel für SettingRow)
+│   ├── components/     #   SettingCard/Row/Toggle/Slider, ChipListEditor, Sidebar
+│   │   └── tabs/       #     ein SFC pro Tab: Import, Tags, OnPage,
+│   │                   #     Connections, Appearance, Data, About
+│   ├── composables/    #   useStatusMessage, useHostList, useConfigBackup,
+│   │                   #   useSourceAccess, useImportStats, useSettingsSearch
+│   └── styles/         #   options.scss = Index; Partials nach Thema (Reihenfolge = Kaskade!)
 ├── i18n/
 │   ├── index.ts        # Framework-freier Kern (t, setLanguage) – KEIN Vue-Import
 │   ├── vue.ts          # useI18n() + Registrierung der UI-Strings
@@ -133,6 +147,7 @@ ContentScript ──(keydown → "hotkey_import" / "hotkey_import_link_last")─
 - `retry_failed_import` – Options-Seite reiht einen fehlgeschlagenen Import erneut ein
 - `stats_mutate` – Statistik-Schreibzugriffe laufen alle über den Background (ein Schreiber)
 - `batch_import` / `batch_status` – Batch-/Pool-Import von Listen-Seiten
+- `batch_cancel` – laufenden Batch stoppen (Queue schließen; Laufendes läuft aus)
 - `batch_selection` – Auswahl-Korb lesen/mutieren (Deltas), überlebt Seitenwechsel
 - `batch_active` – läuft gerade ein Batch? (Fortschritts-Zeile nach Seitenwechsel wiederherstellen)
 - `import_post_url` – Einzel-Import einer Post-URL aus den Thumbnail-Hover-Buttons
@@ -158,6 +173,8 @@ Wichtige Felder: `sites[]`, `selectedSiteId`, `addAllParsedTags`, `alwaysUploadA
   auf die nächste Listen-Seite überlebt (`src/background/batchSelection.ts`)
 - `szuru_batch_session` (`storage.session`) – laufender Batch (Queue + Ergebnisse), damit ein
   Service-Worker-Neustart ihn fortsetzen kann (`src/background/batch.ts`)
+- `szuru_ui_state` (`storage.local`) – gemerkte Panel-Zustände, getrennt von den Einstellungen,
+  damit ein Config-Backup nur Einstellungen enthält (`src/shared/uiState.ts`)
 
 ## Nicht-offensichtliche Invarianten
 
@@ -172,6 +189,15 @@ Wichtige Felder: `sites[]`, `selectedSiteId`, `addAllParsedTags`, `alwaysUploadA
   die Options-Seite schickt `stats_mutate`.
 - **`check_imported`-Fehler ⇒ `unavailable`, nie `imported: false`** — ein False Negative würde zu
   einem Duplikat-Upload einladen.
+- **Batch-Abbruch stoppt die Queue, nicht die laufenden Uploads.** `cancelBatchImport` setzt nur
+  `cancelled` und leert den Cursor; was gerade hochlädt, läuft zu Ende. Einen Tab zwischen
+  Content-Fetch und `createPost` abzuschießen erzeugt halb angelegte Posts.
+- **`tsc --noEmit` prüft KEINE `.vue`-Dateien.** Für SFCs `npm run typecheck` (vue-tsc) nutzen —
+  `tsc`, ESLint und Vitest laufen bei einem kaputten Prop oder Import-Pfad alle grün durch.
+- **Jede `SettingRow` mit `path=` muss in `options/settingsIndex.ts` stehen.**
+  `src/tests/settingsIndex.spec.ts` erzwingt das in beide Richtungen.
+- **Panel-Zustände gehören nach `shared/uiState.ts`, nicht in die Config** — sonst landen sie im
+  Config-Backup neben den Zugangsdaten.
 
 ## Installation (Waterfox / unsigned XPI)
 1. `npm run build && npm run pack:xpi` → `extension.xpi` im Root

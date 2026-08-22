@@ -7,6 +7,12 @@ import {
 } from "~/models";
 import { useStorageLocal } from "~/composables/useStorageLocal";
 import { CONFIG_STORAGE_KEY, defaultConfig } from "~/shared/config";
+import {
+  UI_STATE_STORAGE_KEY,
+  defaultUiState,
+  extractLegacyUiState,
+  type LegacyUiStateSource,
+} from "~/shared/uiState";
 
 // The config shape and its defaults live in `~/shared/config` so the
 // background and content script can read them without pulling in Vue/Pinia.
@@ -123,6 +129,44 @@ export const cfg = useStorageLocal(
           // for existing users: importing a listing in its own order is what put
           // their oldest posts on top of the instance in the first place.
           if (typeof cfg.batchImport.oldestFirst !== "boolean") cfg.batchImport.oldestFirst = true;
+        // eslint-disable-next-line no-fallthrough
+        case 10: {
+          cfg.version++;
+          // Panel open/closed state moves out of the settings config in v3.1.0,
+          // so a config backup stops carrying "the pools section was collapsed"
+          // next to the instance credentials. Carry the user's current state
+          // over before dropping the keys, then delete them so a later export
+          // is clean.
+          const carried = extractLegacyUiState(cfg as LegacyUiStateSource);
+          if (carried) {
+            // Fire and forget: migration is synchronous, and losing a panel
+            // toggle is not worth blocking the config read on.
+            void browser.storage.local
+              .get(UI_STATE_STORAGE_KEY)
+              .then((stored) => {
+                // Never clobber state this browser already wrote.
+                if (stored?.[UI_STATE_STORAGE_KEY]) return;
+                return browser.storage.local.set({
+                  [UI_STATE_STORAGE_KEY]: { ...defaultUiState(), ...carried },
+                });
+              })
+              .catch(() => { /* best effort */ });
+          }
+          for (const key of ["expandTags", "expandPools"]) delete (cfg.popup as any)[key];
+          for (const key of ["expandOptions", "expandExistingTags", "expandAddTags"]) {
+            delete (cfg.merge as any)[key];
+          }
+        }
+        // eslint-disable-next-line no-fallthrough
+        case 11:
+          cfg.version++;
+          // The hover zoom shipped scoped to a host whitelist that started out
+          // empty, so switching it on did nothing until a host was typed in.
+          // Anyone who never filled the list in gets the new "all" default;
+          // a curated list is a deliberate choice and stays untouched.
+          if (cfg.listing.hoverZoomScope === "sites" && !cfg.listing.hoverZoomSites?.length) {
+            cfg.listing.hoverZoomScope = "all";
+          }
       }
 
       if (oldVersion != cfg.version) {
@@ -157,4 +201,9 @@ export const useMergeStore = defineStore("merge", {
     uploadInfo: [] as SetPostUploadInfoData[],
     genericError: undefined as string | undefined,
   }),
+});
+
+// Remembered panel state, kept out of `cfg` on purpose — see ~/shared/uiState.
+export const uiState = useStorageLocal(UI_STATE_STORAGE_KEY, defaultUiState(), {
+  mergeDefaults: true,
 });

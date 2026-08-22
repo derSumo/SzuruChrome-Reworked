@@ -1,0 +1,66 @@
+
+/* ── Liquid tokens ─────────────────────────────────────── */
+:root {
+  --lq-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --lq-mono: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+
+  /* surfaces */
+  --lq-bg: #f2f3f7;
+  --lq-bg-gradient: linear-gradient(135deg, #e8eaf6 0%, #f5f0fa 50%, #e3f2fd 100%);
+  --lq-surface: rgba(255, 255, 255, 0.72);
+  --lq-surface-hover: rgba(255, 255, 255, 0.88);
+  --lq-surface-border: rgba(0, 0, 0, 0.06);
+  --lq-surface-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 24px rgba(0, 0, 0, 0.06);
+  --lq-blur: 24px;
+
+  /* text */
+  --lq-text: #1a1a2e;
+  // 0.62, not 0.52: at 0.52 the option hints came out at 3.4:1 against the page
+  // ground, below the 4.5:1 WCAG AA needs for 12px text. 0.62 measures 4.63:1.
+  --lq-text-secondary: rgba(26, 26, 46, 0.62);
+  --lq-text-tertiary: rgba(26, 26, 46, 0.36);
+
+  /* accent */
+  --lq-accent: #6366f1;
+  --lq-accent-soft: rgba(99, 102, 241, 0.12);
+  --lq-accent-glow: rgba(99, 102, 241, 0.25);
+
+  /* semantic */
+  --lq-success: #10b981;
+  --lq-danger: #ef4444;
+  --lq-warning: #f59e0b;
+
+  /* controls */
+  --lq-input-bg: rgba(0, 0, 0, 0.03);
+  --lq-input-border: rgba(0, 0, 0, 0.1);
+  --lq-input-focus: var(--lq-accent);
+  --lq-toggle-off: rgba(0, 0, 0, 0.16);
+  --lq-toggle-on: var(--lq-accent);
+
+  --lq-radius: 14px;
+  --lq-radius-sm: 10px;
+  --lq-radius-xs: 6px;
+  --lq-transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.dark {
+  --lq-bg: #0c0c14;
+  --lq-bg-gradient: linear-gradient(135deg, #0f0f1e 0%, #150d20 50%, #0d1117 100%);
+  --lq-surface: rgba(255, 255, 255, 0.05);
+  --lq-surface-hover: rgba(255, 255, 255, 0.09);
+  --lq-surface-border: rgba(255, 255, 255, 0.07);
+  --lq-surface-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 4px 24px rgba(0, 0, 0, 0.3);
+
+  --lq-text: rgba(255, 255, 255, 0.92);
+  --lq-text-secondary: rgba(255, 255, 255, 0.48);
+  --lq-text-tertiary: rgba(255, 255, 255, 0.28);
+
+  --lq-accent: #818cf8;
+  --lq-accent-soft: rgba(129, 140, 248, 0.12);
+  --lq-accent-glow: rgba(129, 140, 248, 0.2);
+
+  --lq-input-bg: rgba(255, 255, 255, 0.04);
+  --lq-input-border: rgba(255, 255, 255, 0.08);
+  --lq-toggle-off: rgba(255, 255, 255, 0.14);
+}
+

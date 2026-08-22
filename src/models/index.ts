@@ -1,3 +1,4 @@
+import type { TagRulesConfig } from "~/tagRules";
 import { BooruTypes, ContentType, ScrapedNote, ScrapedPost, ScrapedTag, UploadMode } from "neo-scraper";
 import { MicroTag, Pool, Tag, UpdatePostRequest } from "~/api/models";
 
@@ -160,6 +161,7 @@ export type BrowserCommandName =
   | "batch_import"
   | "batch_selection"
   | "batch_active"
+  | "batch_cancel"
   | "batch_status"
   | "import_post_url"
   | "inject_listing_extras";
@@ -221,6 +223,13 @@ export class SzuruSiteConfig {
   domain = "https://example.com";
   username = "user";
   authToken = "";
+  /**
+   * Per-instance override for the global tag rules. Undefined — the normal
+   * case — means this instance uses the global set. Set it when one instance
+   * wants different tags than another (an SFW and an NSFW instance, or a
+   * different naming convention per target).
+   */
+  tagRules?: TagRulesConfig;
 }
 
 export class TagCategoryColor {

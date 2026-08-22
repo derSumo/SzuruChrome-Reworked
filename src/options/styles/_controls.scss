@@ -1,0 +1,114 @@
+/* ── Toggle switch (liquid pill) ──────────────────────── */
+.toggle {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  margin-top: 2px;
+
+  input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+  }
+}
+
+.toggle-track {
+  display: inline-flex;
+  align-items: center;
+  width: 40px;
+  height: 24px;
+  background: var(--lq-toggle-off);
+  border-radius: 999px;
+  padding: 2px;
+  transition: background 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+
+  .toggle input:checked ~ & {
+    background: var(--lq-toggle-on);
+    box-shadow: 0 0 12px var(--lq-accent-glow);
+  }
+}
+
+.toggle-thumb {
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+
+  .toggle input:checked ~ .toggle-track & {
+    transform: translateX(16px);
+  }
+}
+
+/* ── Select / Input overrides ─────────────────────────── */
+.select-wrapper select,
+.page select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--lq-input-bg);
+  border: 1px solid var(--lq-input-border);
+  border-radius: var(--lq-radius-xs);
+  color: var(--lq-text);
+  font-family: var(--lq-font);
+  font-size: 13px;
+  padding: 0 32px 0 10px;
+  height: 34px;
+  cursor: pointer;
+  transition: border-color var(--lq-transition), box-shadow var(--lq-transition);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236366f1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+
+  &:focus {
+    outline: none;
+    border-color: var(--lq-input-focus);
+    box-shadow: 0 0 0 3px var(--lq-accent-soft);
+  }
+}
+
+.select-wrapper select {
+  width: auto;
+  min-width: 150px;
+}
+
+.select-wrapper select option,
+.page select option {
+  background: #1a1a2e;
+  color: #e8e8f0;
+}
+
+html:not(.dark) .select-wrapper select option,
+html:not(.dark) .page select option {
+  background: #ffffff;
+  color: #1a1a2e;
+}
+
+.page input[type="text"],
+.page input[type="password"],
+.page input[type="email"],
+.page input[type="number"] {
+  background: var(--lq-input-bg);
+  border: 1px solid var(--lq-input-border);
+  border-radius: var(--lq-radius-xs);
+  color: var(--lq-text);
+  font-family: var(--lq-font);
+  font-size: 13px;
+  padding: 0 10px;
+  height: 34px;
+  width: 100%;
+  transition: border-color var(--lq-transition), box-shadow var(--lq-transition);
+
+  &::placeholder { color: var(--lq-text-tertiary); }
+  &:focus {
+    outline: none;
+    border-color: var(--lq-input-focus);
+    box-shadow: 0 0 0 3px var(--lq-accent-soft);
+  }
+}
+

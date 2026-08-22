@@ -1,0 +1,85 @@
+/* ── Import history ──────────────────────────────────────── */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: 84px 62px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 2px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--lq-surface-border);
+}
+
+.history-row:last-child {
+  border-bottom: 0;
+}
+
+.history-outcome {
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
+  border-radius: 999px;
+}
+
+.history-outcome.success {
+  color: var(--lq-success);
+  background: rgba(16, 185, 129, 0.14);
+}
+
+.history-outcome.duplicate {
+  color: var(--lq-text-secondary);
+  background: var(--lq-input-bg);
+}
+
+.history-post {
+  font-family: var(--lq-mono);
+  font-weight: 600;
+  color: var(--lq-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-source {
+  overflow: hidden;
+  color: var(--lq-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-time {
+  color: var(--lq-text-tertiary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-post.muted,
+.history-source.muted {
+  color: var(--lq-text-tertiary);
+}
+
+/* ── Remove buttons (used in every table; previously unstyled) ── */
+.btn-remove {
+  color: var(--lq-text-tertiary);
+}
+
+.btn-remove:hover {
+  color: var(--lq-danger);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+@media (max-width: 640px) {
+  .history-row {
+    grid-template-columns: 74px 54px 1fr;
+    row-gap: 4px;
+  }
+
+  .history-time {
+    grid-column: 1 / -1;
+  }
+}

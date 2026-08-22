@@ -1,0 +1,58 @@
+/* ── Instance form ─────────────────────────────────────── */
+.instance-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.instance-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.form-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.form-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--lq-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.connection-test {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.status-text {
+  font-size: 13px;
+  flex: 1;
+  font-weight: 500;
+}
+
+.status-success { color: var(--lq-success); }
+.status-error   { color: var(--lq-danger); }
+.status-quiet   { color: var(--lq-text-secondary); }
+
+.empty-state {
+  padding: 20px 0 4px;
+  color: var(--lq-text-secondary);
+  font-size: 13px;
+}
+

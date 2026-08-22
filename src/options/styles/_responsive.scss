@@ -1,0 +1,43 @@
+/* ── Responsive ────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .page { flex-direction: column; }
+
+  .sidebar {
+    width: 100%;
+    position: relative;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--lq-surface-border);
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    padding: 6px 8px;
+    overflow-x: auto;
+    gap: 4px;
+  }
+
+  .nav-item { padding: 8px 14px; font-size: 12px; }
+
+  .content { padding: 20px 16px; }
+
+  .form-row { flex-direction: column; gap: 12px; }
+
+  .tag-table-header,
+  .tag-table-row { grid-template-columns: 1fr 1fr 56px 32px; }
+}
+
+/* ── Reduced motion ────────────────────────────────────────
+   The options page carries ~20 transitions and a couple of animations. The
+   batch dock in the content script already honours this preference; this page
+   did not. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -85,5 +85,8 @@ export default defineConfig(({ command }) => ({
   test: {
     globals: true,
     environment: "jsdom",
+    // See src/tests/setup.ts: the webextension polyfill refuses to load without
+    // an extension runtime, which any test importing the config would hit.
+    setupFiles: [r("src/tests/setup.ts")],
   },
 }));

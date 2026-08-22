@@ -4,7 +4,7 @@ import SzurubooruApi from "~/api";
 import { Post, UpdatePostRequest } from "~/api/models";
 import { isMobile } from "~/env";
 import { BrowserCommand, PostUpdateCommandData, TagDetails } from "~/models";
-import { cfg, useMergeStore, usePopupStore } from "~/stores";
+import { cfg, uiState, useMergeStore, usePopupStore } from "~/stores";
 import { emptyPost, getErrorMessage } from "~/utils";
 import { getUrl } from "~/shared/host";
 import { ensurePostHasContentToken } from "../contentToken";
@@ -337,7 +337,7 @@ onMounted(async () => {
         </div>
       </PopupSection>
 
-      <PopupSection :header="t('merge.existingTags')" toggleable v-model="cfg.merge.expandExistingTags">
+      <PopupSection :header="t('merge.existingTags')" toggleable v-model="uiState.merge.expandExistingTags">
         <div class="section-row">
           <CompactTags
             :tags="post.tags.map((x) => TagDetails.fromMicroTag(x))"
@@ -348,7 +348,7 @@ onMounted(async () => {
         </div>
       </PopupSection>
 
-      <PopupSection :header="t('merge.tagsToAdd')" toggleable v-model="cfg.merge.expandAddTags">
+      <PopupSection :header="t('merge.tagsToAdd')" toggleable v-model="uiState.merge.expandAddTags">
         <div class="section-row">
           <TagInput :szuru="szuru" @add-tag="addTag" />
         </div>
@@ -380,7 +380,7 @@ onMounted(async () => {
         </div>
       </PopupSection>
 
-      <PopupSection :header="t('merge.mergeOptions')" toggleable v-model="cfg.merge.expandOptions">
+      <PopupSection :header="t('merge.mergeOptions')" toggleable v-model="uiState.merge.expandOptions">
         <div class="section-row">
           <div style="display: flex; flex-direction: column">
             <label>

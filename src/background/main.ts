@@ -18,9 +18,9 @@ import { getErrorMessage } from "~/utils";
 import { getActiveTab, getActiveTabId, isRestrictedTabUrl } from "~/shared/tabs";
 import { onConfigChanged } from "~/shared/config";
 import { getGrantedSourceSiteMatchPatterns } from "~/shared/sourceSites";
-import { clearFailures, getStats, removeFailure, resetStats } from "~/stats";
+import { clearFailures, clearRecent, getStats, removeFailure, resetStats } from "~/stats";
 import { handleBatchImport, resumeInterruptedBatch } from "./batchController";
-import { getActiveBatchStatus } from "./batch";
+import { cancelBatchImport, getActiveBatchStatus } from "./batch";
 import { importPostUrl } from "./pageImport";
 import { mutateBatchSelection } from "./batchSelection";
 import { installCdnHeaderRewriting } from "./cdnAccess";
@@ -108,6 +108,9 @@ async function handleStatsMutate(data: { op?: string; id?: string }): Promise<{ 
     case "removeFailure":
       if (data.id) await removeFailure(data.id);
       return { ok: true };
+    case "clearRecent":
+      await clearRecent();
+      return { ok: true };
     case "clearFailures":
       await clearFailures();
       return { ok: true };
@@ -184,6 +187,8 @@ async function messageHandler(cmd: BrowserCommand, sender: any): Promise<any> {
       return mutateBatchSelection(cmd.data ?? {});
     case "batch_active":
       return getActiveBatchStatus();
+    case "batch_cancel":
+      return { cancelled: cancelBatchImport(cmd.data?.batchId) };
     case "import_post_url":
       return importPostUrl(cmd.data ?? {}, senderTabId);
     case "inject_listing_extras":

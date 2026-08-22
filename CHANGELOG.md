@@ -1,5 +1,39 @@
 # Changelog
 
+## [3.1.0] – August 2026
+
+### Added
+
+- **A running batch can be stopped.** A batch could be started but never cancelled — queueing 500 posts by accident (the default `maxPosts`) left closing the browser as the only way out. The "Stop scanning" button only ever aborted the URL crawl, not the import. Every running batch now has a stop button, both in the page dock and in the popup. Items already uploading run to completion; nothing new is started. Tearing a tab down between the content fetch and `createPost` is what would leave a half-created post, so "stop" deliberately means "stop starting", not "kill".
+- **Batch progress in the popup.** The runner lives in the background and keeps going across navigations and closed tabs, but its progress only ever showed in the dock on the booru page it was started from. It now appears in the popup on any tab, with its stop button.
+- **Import history.** The last 50 successful imports, each linking to the post it created and the page it came from, under Data. The statistics counted successes but never recorded them individually, so "did I already upload this, and where did it go?" had no answer.
+- **Search across all settings.** Roughly 40 settings across seven tabs is past the point where scanning beats searching. Matches on the translated name and description in either language; results say which tab they live on.
+- **Settings that differ from their default are marked**, and clicking the mark resets that one setting.
+- **Deep links into a setting** — `options.html#tags/tagRules.enabled` opens the tab and points at the switch.
+- **Tag rules per instance.** An instance can carry its own blacklist and rewrites instead of sharing one global set, which is what a second, differently-tagged target needs. Instances without an override keep following the global rules.
+- **The rule tester can read the open page.** It can pull the tags off whatever booru page is open, so you see what the rules do to a real scrape instead of tag names typed from memory.
+- **"Load post details" has a switch.** `fetchPostInfo` existed in the config and was being honoured, but had no UI anywhere — it was reachable only from the devtools console.
+
+### Changed
+
+- **The settings are reorganised into seven tabs that each do one job.** "General" had grown to 9 cards and 26 of the ~40 settings, while "Tags" held only the category colours. Tag rules moved next to those colours, backup moved in with the rest of your data, and the source-site permissions moved in with the instances they belong to. The changelog moved into a new "About" tab and is rendered from data rather than hand-copied markup.
+
+### Fixed
+
+- **Enlarging thumbnails works again.** The hover zoom was scoped to a host whitelist that ships empty, and the scope defaulted to "only the sites listed" — so switching the feature on did nothing whatsoever until a host was typed in by hand, with no hint that anything was missing. The scope now defaults to every supported site, an empty list means "wherever the extension runs" rather than "nowhere", and a config that never had a host in it is migrated over. The content script also says so in the console when the zoom is on but scoped away from the current page. Curated lists keep restricting to exactly their entries.
+- **A zoom delay of 0 ms is honoured.** The slider offers 0 ("open immediately"), but any value below 1 was treated as corrupt and replaced by the 350 ms default.
+- **Keyboard focus is visible again.** Each toggle hides its real checkbox in a `0×0` box, so the browser drew the focus ring on nothing — tabbing through two dozen switches gave no indication of position. There was no `:focus-visible` rule anywhere in the options stylesheet.
+- **Explanatory text meets WCAG AA.** The hint under each setting sat at roughly 3.4:1 against the page background, below the 4.5:1 required for 12px text — on precisely the text that explains what a switch does.
+- **The options page honours "reduce motion".** It carries about 20 transitions and had no `prefers-reduced-motion` block; the batch dock in the content script already did this correctly.
+- **Configuration backups contain settings only.** Which panels you had collapsed was stored alongside the settings and travelled with every export, next to the instance credentials. It moved to its own storage key; existing state is carried over by the config migration.
+- **25 dead translation keys removed** (17 UI, 8 runtime, in both languages), left behind by earlier renames.
+- **Dead code removed** — an unused computed in the popup that no SFC type-checker had ever looked at.
+
+### Internal
+
+- `npm run typecheck` (`vue-tsc`) now covers the `.vue` files. Plain `tsc` ignores SFCs entirely, so a broken prop or import path inside a component passed `tsc`, ESLint and Vitest alike; the first run of `vue-tsc` found two such problems.
+- The options page is split from one 2652-line SFC into a shell, seven tab components, six composables and a themed stylesheet; the popup's 1118 lines of scoped SCSS moved into their own file. `src/tests/settingsIndex.spec.ts` parses the tab components and fails if a setting is missing from the search index, so it cannot silently go stale.
+
 ## [3.0.6] – August 2026
 
 ### Fixed

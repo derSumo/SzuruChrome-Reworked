@@ -129,6 +129,7 @@ export async function importPostUrl(
         outcome: result.alreadyUploaded ? "duplicate" : "success",
         pageUrl: url,
         siteId: site.id,
+        postId,
         durationMs: Date.now() - startedAt,
       }).catch(() => { });
     }

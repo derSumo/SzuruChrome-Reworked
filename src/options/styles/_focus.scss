@@ -1,0 +1,47 @@
+/* ── Keyboard focus ────────────────────────────────────────
+   The custom toggle hides its real checkbox with
+   `opacity:0; width:0; height:0`, so the browser drew its focus ring on a
+   0×0 box — tabbing through two dozen switches gave no visible position at
+   all. Every interactive control therefore gets an explicit ring here.
+
+   `:focus-visible` rather than `:focus`, so a mouse click doesn't leave a
+   ring behind on controls the pointer already makes obvious.
+   ──────────────────────────────────────────────────────── */
+
+%lq-focus-ring {
+  outline: 2px solid var(--lq-accent);
+  outline-offset: 2px;
+  border-radius: var(--lq-radius-xs);
+}
+
+.btn:focus-visible,
+.btn-icon:focus-visible,
+.nav-item:focus-visible,
+.uac-remove:focus-visible,
+.search-hit:focus-visible,
+.option-changed:focus-visible,
+.sidebar-search-input:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  @extend %lq-focus-ring;
+}
+
+/* The visible pill stands in for the input the browser is actually focusing. */
+.toggle input[type="checkbox"]:focus-visible ~ .toggle-track {
+  outline: 2px solid var(--lq-accent);
+  outline-offset: 3px;
+}
+
+.source-access-row:focus-within {
+  outline: 2px solid var(--lq-accent);
+  outline-offset: 2px;
+  border-radius: var(--lq-radius-xs);
+}
+
+/* Range inputs render their own thumb; ring the whole track instead. */
+.lq-slider:focus-visible {
+  outline: 2px solid var(--lq-accent);
+  outline-offset: 4px;
+  border-radius: 999px;
+}
